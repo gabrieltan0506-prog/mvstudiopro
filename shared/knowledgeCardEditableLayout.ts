@@ -2,6 +2,7 @@ import { knowledgeEditionIllustratedPages, planKnowledgeCardPages } from "./know
 import type { LayoutSource } from "./editableLayout";
 import {knowledgeEditionParts} from './knowledgeCardEdition';
 import { KNOWLEDGE_READING_CONTRACT } from "./knowledgeEditionBudget";
+import { KNOWLEDGE_SUPPLEMENT_MAX_CHARS } from "./knowledgePublication";
 
 // 复用实际出图分页；缺图保留原页位置，不将后页配图前移。
 export function knowledgeCardLayoutSource(input: {
@@ -101,4 +102,30 @@ export function illustratedKnowledgeCardSource(input: {
     ...reading.pages!.map(page => ({ ...page, knowledgeRole: "reading" as const })),
     ...illustrations.pages!.map(page => ({ ...page, pageIndex: offset + page.pageIndex, knowledgeRole: "illustration" as const })),
   ], images: Object.fromEntries(Object.entries(illustrations.images || {}).map(([page, url]) => [offset + Number(page), url])) };
+}
+
+/** 云端排版库整库上限（与服务端 editableLayoutStore 一致）。 */
+export const KNOWLEDGE_LAYOUT_LIBRARY_MAX_BYTES = 64 * 1024 * 1024;
+
+/**
+ * 出图前在本地先查一遍超限页：超限时给出哪一章、多少字、怎么办，不让整册在表结构校验里只抛一句笼统错误。
+ * 只读、不改稿，不影响任何摘要与请求身份。
+ */
+export function knowledgeLayoutSourceOversize(source: LayoutSource): string | null {
+  const bad: string[] = [];
+  for (const page of source.pages || []) {
+    const name = `第 ${page.pageIndex} 章「${page.headline.slice(0, 30)}」`;
+    if ((page.supplement?.length || 0) > KNOWLEDGE_SUPPLEMENT_MAX_CHARS)
+      bad.push(`${name}图外内文 ${page.supplement!.length.toLocaleString()} 字（上限 ${KNOWLEDGE_SUPPLEMENT_MAX_CHARS.toLocaleString()}）`);
+  }
+  if (!bad.length) return null;
+  const level = source.detailLevel === "concise" ? "精华版" : source.detailLevel === "full" ? "完整版" : "当前稿件";
+  return `${level}出图前检查未通过，尚未开始出图、未扣费：${bad.slice(0, 3).join("；")}${bad.length > 3 ? ` 等 ${bad.length} 处` : ""}。请改用完整版（每章配图更多、图外内文更分散），或先精简这些章节后再出图。`;
+}
+
+/** 整库保存前检查体积；超限时提前说明，不发出必被拒的保存请求。 */
+export function knowledgeLayoutLibraryOversize(bytes: number): string | null {
+  return bytes > KNOWLEDGE_LAYOUT_LIBRARY_MAX_BYTES
+    ? `云端稿件库将达 ${(bytes / 1048576).toFixed(1)}MB，超过 64MB 上限，尚未开始出图、未扣费。请先在排版稿列表中删除不再需要的旧稿后再出图。`
+    : null;
 }

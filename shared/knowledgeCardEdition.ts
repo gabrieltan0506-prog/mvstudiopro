@@ -1,3 +1,4 @@
+import { knowledgePlanCache } from './knowledgePlanCache';
 export type KnowledgeEditionModule = { headline: string; body: string; priority: 'primary' | 'secondary' };
 const editionMarker = /^<!-- knowledge-edition:v2:(full|concise) -->\s*/;
 
@@ -43,7 +44,19 @@ export function compileKnowledgeEditions(title: string, modules: KnowledgeEditio
   return {full:render('full'),concise:render('concise')};
 }
 
+/** 是否为两档手册稿（带两档标记）；无标记的提炼原稿走旧的按字数分页，其页数不是手册张数。 */
+export function isKnowledgeEditionManuscript(text: string) {
+  return editionMarker.test(String(text || ''));
+}
+
+export const knowledgeEditionPartsCache = knowledgePlanCache<ReturnType<typeof computeKnowledgeEditionParts>>();
+/** 两档稿解析（缓存，命中返回浅拷贝：模块数组与模块对象各复制一层）。 */
 export function knowledgeEditionParts(markdown: string) {
+  const parts = knowledgeEditionPartsCache.get(markdown, () => computeKnowledgeEditionParts(markdown));
+  return parts && { ...parts, modules: parts.modules.map(m => ({ ...m })) };
+}
+
+function computeKnowledgeEditionParts(markdown: string) {
   const match = markdown.match(editionMarker);
   if (!match) return null;
   // 主题图标题注释只供出图规划读取，不属于正文。

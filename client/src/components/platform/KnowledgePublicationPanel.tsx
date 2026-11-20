@@ -1,7 +1,8 @@
 import {KNOWLEDGE_INTERIOR_PRICE_COPY} from "@shared/knowledgePublicationPricing";
 import {knowledgeConversationAnswerSchema} from "@shared/knowledgeConversation";
 import type {KnowledgeSupplementSelection} from "@shared/knowledgeSupplement";
-import { completedKnowledgeBatches, knowledgeCoalescedUpdater, knowledgeCompletedPrefix, runKnowledgeParallelBatches } from "@shared/knowledgePublicationParallel";
+import { completedKnowledgeBatches, knowledgeCoalescedUpdater, runKnowledgeParallelBatches } from "@shared/knowledgePublicationParallel";
+import { knowledgeParallelAfterBatch } from "@/lib/knowledgePublicationParallelState";
 import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
 import { pollJobUntilTerminal } from "@/lib/jobs";
 import {knowledgePresentationSourceManuscript,knowledgePresentationRequestMatches,knowledgePresentationRangeSchema,knowledgePresentationPlanSchema,knowledgePresentationCapacityIssues,assertKnowledgePresentationCapacity,validateKnowledgePresentationRevision,type KnowledgePresentationPlan} from "@shared/knowledgePresentation";
@@ -425,10 +426,10 @@ export default function KnowledgePublicationPanel({
           // 完整版图文同页：压缩后仍超出图下容量的页只提示不阻断（会排成续页），由用户决定是否改图数或手动精简。
           if(result.budgetOverflow?.after.length)console.warn(`[knowledgePublication] 第${i+1}组有${result.budgetOverflow.after.length}页内文压缩后仍超出图下容量：${result.budgetOverflow.after.map(o=>`${o.headline} ${o.chars}/${o.maxChars}字`).join("；")}${result.budgetOverflow.error?`（压缩调用未完成：${result.budgetOverflow.error.slice(0,120)}）`:""}`);
           pub = {...pub,chapterReviewDigest:result.sourceDigest,chapterReviews:{...pub.chapterReviews,...Object.fromEntries((result.pages||[]).map(page=>[page.id,page]))}};
-          const completed = completedKnowledgeBatches(pub, batches.length);
-          completed.add(i);
-          pub = { ...pub, parallel: { channels: pub.parallel!.channels, completed: Array.from(completed).sort((a, b) => a - b) }, completedBatches: knowledgeCompletedPrefix(completed, batches.length) };
-          setStage({ step: 0, done: completed.size, total: batches.length });
+          // 只覆盖 completed，family 等并发字段原样保留（原写法丢 family，后续新批次退回 DeepSeek 优先）。
+          const merged = knowledgeParallelAfterBatch(pub, i, batches.length);
+          pub = merged.publication;
+          setStage({ step: 0, done: merged.done, total: batches.length });
           const imageUrls = new Map((result.images || []).map(image => [image.id, image.url]));
           next = { ...next, pages: next.pages.map(page => imageUrls.has(page.id) ? { ...page, imageUrl: imageUrls.get(page.id)! } : page), publication: pub };
         }

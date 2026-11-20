@@ -33,6 +33,7 @@ import {
   type LayoutLibrary,
   type LayoutSource,
 } from "@shared/editableLayout";
+import { knowledgeLayoutLibraryOversize } from "@shared/knowledgeCardEditableLayout";
 import {
   downloadLayoutBlob,
   exportEditableLayout,
@@ -375,6 +376,9 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
       }
       const previous = current.current;
       const library = layoutLibrarySchema.parse({ ...previous.library, documents: [...previous.library.documents, nextDoc] });
+      // 大稿整库可达数十 MB：超过服务端 64MB 上限时提前说明，不发出必被拒的保存请求（只读检查，不改稿）。
+      const oversize = knowledgeLayoutLibraryOversize(new TextEncoder().encode(JSON.stringify({ library })).length);
+      if (oversize) throw new Error(oversize);
       // 先保存完整底稿和全部图片任务身份，再允许任何收费请求。
       const result = await cloudSave({ library, expectedGeneration: previous.generation });
       install({ library, generation: result.generation, dirty: false, activeId: nextDoc.id });

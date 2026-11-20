@@ -73,3 +73,11 @@ it("提炼成功进入结算时，成品 output 带上全部分段计时（结�
   const at = state.settle.mock.calls[0][1].output.distillStageAt as Record<string, string>;
   for (const k of ["jobCreated", "runnerStarted", "textReady", "firstDistillRequest", "lastDistillReport", "distillOutputReady"]) expect(typeof at[k]).toBe("string");
 });
+it("1120：提炼服务返回的 distillGaps 原样进成品 output（结算检查点）", async () => {
+  state.settle.mockResolvedValue("cancelled");
+  const gaps = [{ chunk: 358, reason: "缺段" }];
+  const base = { distilledMarkdown: "# 标题\n\n正文", skippedDistill: false, distillModel: "deepseek-v4.1-flash-1017", documents: [], extractionMethods: [], sourceChars: 2, detailLevel: "full", convertedPdfs: [] };
+  state.prepare.mockResolvedValueOnce({ ...base, distillGaps: gaps });
+  await processJobsOnce();
+  expect(state.settle.mock.calls.at(-1)![1].output.distillGaps).toEqual(gaps);
+});

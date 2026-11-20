@@ -7,6 +7,12 @@ import { knowledgeCitationSchema } from "./knowledgeResearch";
 import { z } from "zod";
 import { knowledgeReadingSchema } from "./knowledgePublicationLayout";
 
+/**
+ * 单章图外内文（supplement）上限。原与正文同为 5 万字；完整版大稿（四千多章节摊到 48 张图）平均每章约 3.5 万字、
+ * 分布不均必有超 5 万字的章，整册在确认框前校验失败、0 个出图任务（2026-11-20）。
+ * 这里只是放宽上限（旧稿都 ≤5 万字，解析结果与摘要逐字不变）；真正的容量保护仍是整库 64MB 与审校分批。
+ */
+export const KNOWLEDGE_SUPPLEMENT_MAX_CHARS = 400_000;
 export type KnowledgePublicationPagination = { imagePages: number; totalPages: number };
 
 /** 知识卡专用合同；学习报告只提供视觉参考，不携带剧情、镜头或音轨字段。 */
@@ -28,7 +34,7 @@ export const knowledgeSourcePageSchema = z
     headline: z.string().max(500),
     body: z.string().max(50000),
     /** 并入本章的图外文字资料（原独立文字模块），不在图中；只供审校整合为该章内文。 */
-    supplement: z.string().max(50000).optional(),
+    supplement: z.string().max(KNOWLEDGE_SUPPLEMENT_MAX_CHARS).optional(),
     imageUrl: z.string().max(6000),
     imageJobId: z.string().min(1).max(200).optional(),
     role: z.enum(["reading", "illustration"]).optional(),

@@ -51,17 +51,31 @@ export function partitionKnowledgeTopics(weights: readonly number[], groups: num
   const prefix = [0];
   for (const w of weights) prefix.push(prefix[prefix.length - 1]! + Math.max(1, w));
   const sum = (a: number, b: number) => prefix[b]! - prefix[a]!;
-  // cost[j][i]：前 i 个小节分成 j 组时的最大组字数
-  const cost: number[][] = Array.from({ length: k + 1 }, () => new Array(n + 1).fill(Infinity));
-  const cut: number[][] = Array.from({ length: k + 1 }, () => new Array(n + 1).fill(0));
-  cost[0]![0] = 0;
+  // cost[j][i]：前 i 个小节分成 j 组时的最大组字数；切点取「使最大组最小的最靠前的 p」。
+  // 划分结果就是主题身份（标题回执、图内文字、逐页出图请求都以它为准），所以这里只换求法、不换结果：
+  // 固定 j、i 时 A(p)=cost[j-1][p] 随 p 不减，B(p)=sum(p,i) 随 p 严格递减（每节权重至少 1），
+  // max(A,B) 的最小值只可能出现在交叉点两侧：p*=第一个 A(p)≥B(p) 的 p，候选为 p*-1（值 B(p*-1)）与 p*（值 A(p*)）；
+  // 两者相等时取靠前的 p*-1。二分找 p*，整体由 O(k·n²) 降到 O(k·n·log n)——四千多节的书原先单次约 3.4 秒。
+  let previous = new Float64Array(n + 1).fill(Infinity);
+  previous[0] = 0;
+  const cut: Int32Array[] = [new Int32Array(0)];
   for (let j = 1; j <= k; j++) {
+    const current = new Float64Array(n + 1).fill(Infinity);
+    const cuts = new Int32Array(n + 1);
     for (let i = j; i <= n; i++) {
-      for (let p = j - 1; p < i; p++) {
-        const value = Math.max(cost[j - 1]![p]!, sum(p, i));
-        if (value < cost[j]![i]!) { cost[j]![i] = value; cut[j]![i] = p; }
+      let lo = j - 1, hi = i;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (previous[mid]! >= sum(mid, i)) hi = mid; else lo = mid + 1;
       }
+      const cross = lo;
+      const before = cross - 1 >= j - 1 ? sum(cross - 1, i) : Infinity;
+      const at = cross <= i - 1 ? previous[cross]! : Infinity;
+      if (before <= at) { current[i] = before; cuts[i] = cross - 1; }
+      else { current[i] = at; cuts[i] = cross; }
     }
+    previous = current;
+    cut.push(cuts);
   }
   const result: number[][] = [];
   let end = n;

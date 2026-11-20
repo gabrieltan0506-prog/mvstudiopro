@@ -45,3 +45,13 @@ it("逐页出图同一本稿：摘要与分页各只算一次；换稿后重算"
   expect(handbookManuscriptPageBody(other, 1)).toBe(planKnowledgeCardPages(other).pages[0]);
   digestSpy.mockRestore();
 });
+it("出图前准备：上传进度逐段回报 a/b，分片内容与顺序不变；步骤文案与失败句", async () => {
+  const { handbookPrepareStepLabel, handbookPrepareFailureMessage } = await import("./handbookManuscriptStage");
+  const seen: string[] = [], order: number[] = [];
+  const api = { stageChunk: vi.fn(async (c: any) => { order.push(c.index); }), finalize: vi.fn(async () => {}) };
+  await stageHandbookManuscript(big, api, (a, b) => seen.push(`${a}/${b}`));
+  expect(seen).toEqual(["0/3", "1/3", "2/3", "3/3"]);
+  expect(order).toEqual([0, 1, 2]);
+  expect(handbookPrepareStepLabel("上传大稿并报价", "已上传 1/3 段")).toBe("出图前准备 第 2/7 步：上传大稿并报价（已上传 1/3 段）");
+  expect(handbookPrepareFailureMessage("保存云端稿件并报价", "网络中断")).toBe("出图前准备第 6 步（保存云端稿件并报价）未完成，尚未出图、未扣费：网络中断");
+});

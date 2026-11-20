@@ -836,12 +836,21 @@ export async function markKnowledgeCardSettlementSucceeded(
  */
 const knowledgeHandoffAbandonCheckedAt = new Map<string, number>();
 export async function isPlatformJobCancelRequested(jobId: string): Promise<boolean> {
-  const job = await getJobByIdStrict(jobId);
+  // 1120：每 2 秒一次的取消轮询只取用到的三列。原来 select * 会把输入里整本底稿（约 5MB）连同 output
+  // 一起拉回再 JSON 解析，一小时约 9GB；字段语义与原「解析 input 后取键」一致（非对象 input 取不到键）。
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot query job");
+  const rows = await db.select({
+    status: jobs.status,
+    cancelRequestedAt: sql<unknown>`case when json_typeof(${jobs.input}) = 'object' then ${jobs.input}->'cancelRequestedAt' end`,
+    handedOffAt: sql<unknown>`case when json_typeof(${jobs.input}) = 'object' then ${jobs.input}->'handedOffAt' end`,
+  }).from(jobs).where(eq(jobs.id, jobId)).limit(1);
+  const job = rows[0];
   if (!job) return true;
-  const raw = parseMaybeJson(job.input);
+  const raw: Record<string, unknown> = { cancelRequestedAt: job.cancelRequestedAt ?? undefined, handedOffAt: job.handedOffAt ?? undefined };
   // 读档已交接给跟进页（原始页已离开）：所有跟进页都失联超过兜底时长就按离页口径停止（每单 30 s 最多查一次）
-  const handedOffAt = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>).handedOffAt : undefined;
-  if (handedOffAt && job.status === "running" && !(raw as Record<string, unknown>).cancelRequestedAt) {
+  const handedOffAt = raw.handedOffAt;
+  if (handedOffAt && job.status === "running" && !raw.cancelRequestedAt) {
     const { stopAbandonedHandedOffKnowledgeCardJobs, KNOWLEDGE_CARD_HANDOFF_ABANDON_MS } = await import("./knowledgeCardPageTask");
     const last = knowledgeHandoffAbandonCheckedAt.get(jobId) ?? 0;
     if (Date.now() - Date.parse(String(handedOffAt)) >= KNOWLEDGE_CARD_HANDOFF_ABANDON_MS && Date.now() - last >= 30_000) {
@@ -849,11 +858,7 @@ export async function isPlatformJobCancelRequested(jobId: string): Promise<boole
       if (await stopAbandonedHandedOffKnowledgeCardJobs(jobId) > 0) { knowledgeHandoffAbandonCheckedAt.delete(jobId); return true; }
     }
   }
-  return Boolean(
-    job.status === "failed"
-    || (raw && typeof raw === "object" && !Array.isArray(raw)
-      && (raw as Record<string, unknown>).cancelRequestedAt),
-  );
+  return Boolean(job.status === "failed" || raw.cancelRequestedAt);
 }
 
 export async function isManhuaTemplateLearnJobCancelRequested(jobId: string): Promise<boolean> {
@@ -1608,10 +1613,60 @@ export async function touchJobRunningUpdatedAt(jobId: string): Promise<boolean> 
 /** platform_topic_image 等長任務：running 時把部分 output 寫入 DB，供 GET /api/jobs 輪詢看到即時步驟 */
 const PLATFORM_JOB_PROGRESS_LOG_MAX = 240;
 
+/**
+ * 1120：进度写入改为库内 jsonb 顶层合并，不再先把整行（含 5MB 底稿 input）读回来。
+ * 与原「读整行 → {...旧, ...补丁} → 写回」逐项等价：
+ * · 顶层浅合并（嵌套对象整体替换）＝ jsonb `||`；
+ * · 补丁里值为 undefined 的键原写法会在序列化时被删掉 → 这里显式 `- 键`；
+ * · 旧 output 为 null/数组/标量时原写法当作 {} → 这里同样；
+ * · imageGenFlowLog 合并后超过上限只留最后 240 条（不论来自补丁还是旧值）；
+ * · 旧 output 是「JSON 字符串」这种历史形态时原写法会先解析，这里不猜，退回原读改写路径。
+ */
+const progressMergedOutput = (patch: Record<string, unknown>) => {
+  const defined: Record<string, unknown> = {};
+  const removed: string[] = [];
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) removed.push(key);
+    else defined[key] = value;
+  }
+  const base = sql`(case when jsonb_typeof(${jobs.output}::jsonb) = 'object' then ${jobs.output}::jsonb else '{}'::jsonb end)`;
+  const merged = sql`((${base} || ${JSON.stringify(defined)}::jsonb) - ${removed.length ? sql`array[${sql.join(removed.map((key) => sql`${key}`), sql`, `)}]::text[]` : sql`'{}'::text[]`})`;
+  return sql`(select case
+      when jsonb_typeof(m->'imageGenFlowLog') = 'array' and jsonb_array_length(m->'imageGenFlowLog') > ${PLATFORM_JOB_PROGRESS_LOG_MAX}
+        then jsonb_set(m, '{imageGenFlowLog}', (
+          select jsonb_agg(e order by i) from jsonb_array_elements(m->'imageGenFlowLog') with ordinality as t(e, i)
+          where i > jsonb_array_length(m->'imageGenFlowLog') - ${PLATFORM_JOB_PROGRESS_LOG_MAX}))
+      else m end
+    from (select ${merged} as m) as merged_output)::json`;
+};
+
 export async function patchJobRunningProgress(jobId: string, patch: Record<string, unknown>): Promise<void> {
   const db = await getDb();
   if (!db) return;
   try {
+    const updated = await db.update(jobs).set({
+      output: progressMergedOutput(patch) as unknown as Job["output"], updatedAt: new Date(),
+    }).where(and(
+      eq(jobs.id, jobId), eq(jobs.status, "running"),
+      sql`coalesce(jsonb_typeof(${jobs.output}::jsonb), 'null') <> 'string'`,
+      // 迟到的进度快照不能抹掉已原子写入的结算检查点，也不能覆盖最终稿件。
+      sql`not (coalesce(${jobs.output}::jsonb, '{}'::jsonb) ? 'knowledgeCardSettlement')`,
+    )).returning({ id: jobs.id });
+    if (updated.length > 0) return;
+    // 没写上：多数是不在 running 或已有结算检查点（原写法同样不写）；只有历史字符串形态才走旧路径。
+    const [shape] = await db.select({ kind: sql<string | null>`jsonb_typeof(${jobs.output}::jsonb)` })
+      .from(jobs).where(and(eq(jobs.id, jobId), eq(jobs.status, "running"))).limit(1);
+    if (shape?.kind !== "string") return;
+    await patchJobRunningProgressByRewrite(db, jobId, patch);
+  } catch (error) {
+    console.warn("[JobsRepo] patchJobRunningProgress failed:", error);
+  }
+}
+
+async function patchJobRunningProgressByRewrite(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>, jobId: string, patch: Record<string, unknown>,
+): Promise<void> {
+  {
     const job = await getJobById(jobId);
     if (!job || job.status !== "running") return;
     const prevOut =
@@ -1627,8 +1682,6 @@ export async function patchJobRunningProgress(jobId: string, patch: Record<strin
       eq(jobs.id, jobId), eq(jobs.status, "running"),
       sql`not (coalesce(${jobs.output}::jsonb, '{}'::jsonb) ? 'knowledgeCardSettlement')`,
     ));
-  } catch (error) {
-    console.warn("[JobsRepo] patchJobRunningProgress failed:", error);
   }
 }
 

@@ -4,7 +4,7 @@ const state = vi.hoisted(() => ({ jobs: new Map<string, any>(), sourceLoads: 0 }
 vi.mock("../jobs/repository", async importOriginal => ({ ...await importOriginal<any>(), getJobByIdStrict: vi.fn(async (id: string) => state.jobs.get(id) || null) }));
 vi.mock("./gcs", async importOriginal => ({ ...await importOriginal<any>(), getGcsBucketName: () => "test" }));
 vi.mock("./postProdMediaSource", async importOriginal => ({ ...await importOriginal<any>(),
-  loadSucceededJobOutputSources: async () => { state.sourceLoads++; return { objects: new Set<string>(), urls: new Set<string>() }; },
+  loadSucceededJobOutputSourcesForJobs: async () => { state.sourceLoads++; return { objects: new Set<string>(), urls: new Set<string>() }; },
   resolveRegisteredPostProdMediaSource: async ({ source }: { source: string }) => source.replace("https://storage.googleapis.com/", "gs://") }));
 import { synchronizedKnowledgeCardSource } from "../../shared/knowledgeCardEditableLayout";
 import { layoutFromSource } from "../../shared/editableLayout";

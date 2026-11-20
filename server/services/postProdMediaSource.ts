@@ -14,7 +14,7 @@
  * 以及本人 succeeded 任务 output 明确产物字段里逐字全等的 https 直链
  * (整集合成落 Vercel Blob、第三方引擎 CDN 产物都在此列;仍限本人产物,下载禁跳转、有体积上限)。
  */
-import { and, asc, eq, gt } from "drizzle-orm";
+import { and, asc, eq, gt, inArray } from "drizzle-orm";
 import { jobs } from "../../drizzle/schema";
 import { getDb } from "../db";
 import {
@@ -218,6 +218,38 @@ export async function loadSucceededJobOutputSources(
   if (Number.isSafeInteger(uid) && uid > 0) {
     const { loadSucceededCanvasVideoOutputObjects } = await import("./canvasVideoTask.js");
     for (const object of Array.from(await loadSucceededCanvasVideoOutputObjects(uid))) objects.add(object);
+  }
+  return { objects, urls };
+}
+
+/**
+ * 定向版登记读取：只读指定任务编号中「属于本人且已成功」的行，只取 id 与 output 两列。
+ * 图文手册核对配图归属时用（配图地址本就取自该任务产物），避免每批都整表扫描本人全部成功任务的 output（含 MB 级提炼稿）。
+ * 归属条件与全表版相同（userId + status=succeeded + 明确产物字段），结果是全表版的子集，只会更严不会更宽。
+ */
+export async function loadSucceededJobOutputSourcesForJobs(
+  userId: string,
+  bucket: string,
+  jobIds: readonly string[],
+): Promise<{ objects: ReadonlySet<string>; urls: ReadonlySet<string> }> {
+  const objects = new Set<string>();
+  const urls = new Set<string>();
+  const ids = Array.from(new Set(jobIds.filter(id => typeof id === "string" && id)));
+  if (!ids.length) return { objects, urls };
+  const db = await getDb();
+  if (!db) throw new Error("数据库暂时不可用,请稍后再试");
+  for (let i = 0; i < ids.length; i += SUCCEEDED_OUTPUT_PAGE_SIZE) {
+    const rows = await db
+      .select({ id: jobs.id, output: jobs.output })
+      .from(jobs)
+      .where(and(eq(jobs.userId, userId), eq(jobs.status, "succeeded"), inArray(jobs.id, ids.slice(i, i + SUCCEEDED_OUTPUT_PAGE_SIZE))));
+    for (const row of rows) {
+      for (const source of collectDeclaredMediaSources(row.output)) {
+        const objectName = extractSystemObjectName(source, bucket);
+        if (objectName) objects.add(objectName);
+        else if (/^https:\/\//i.test(source)) urls.add(source);
+      }
+    }
   }
   return { objects, urls };
 }

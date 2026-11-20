@@ -1,14 +1,38 @@
-import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
+import {KNOWLEDGE_MODEL_CHANNEL_MAX,type KnowledgeModelChannel} from '../../shared/knowledgeConcurrency';
 import {createHash} from 'node:crypto';
 import {buildKnowledgeConsistencyRequest,buildKnowledgeFinalRevisionRequest} from './knowledgePublicationAdvisor';
 import {knowledgeVerificationTriggers,knowledgePendingResearchNotes} from './knowledgeVerificationPolicy';
 import {invokeKnowledgePublicationRoutes,type KnowledgeRouteEvidence} from './knowledgePublicationRoutes';
 import {knowledgeModulesFromMarkdown} from '../../shared/knowledgeCardEdition';
 import {hasKnowledgeBody,markKnowledgeEditionGap,type KnowledgeEditionIssue} from '../../shared/knowledgeEditionIssues';
-import {guardKnowledgeEditionEvidence,rethrowKnowledgeEditionInvariant,knowledgeEditionErrorMessage,isKnowledgeReceiptUnknown} from './knowledgeEditionRecovery';
+import {guardKnowledgeEditionEvidence,rethrowKnowledgeEditionInvariant,knowledgeEditionErrorMessage,isKnowledgeReceiptUnknown,isTransientEditionCheckpointError} from './knowledgeEditionRecovery';
 
-/** 正式末段：仅处理疑点、空正文和已记录失败；每页独立保存，局部失败保留原稿继续。 */
-export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:KnowledgeRouteEvidence,invoke=invokeKnowledgePublicationRoutes,onProgress?:(p:{doneBatches:number;totalBatches:number;pass:number})=>void|Promise<void>){
+/**
+ * 单章检查点瞬态失败（存取层已原位重试四次仍失败）后放回队尾的等待：每章最多再试三次、间隔递增。
+ * 超过次数才整单抛出，由 runner 按既有规则延迟重排。
+ */
+export const KNOWLEDGE_VERIFICATION_CHECKPOINT_REQUEUE_MS = [5000, 15000, 30000] as const;
+
+type PendingNote={pageIndex:number;message:string};
+export type KnowledgeEditionVerificationResult={bodies:string[];issues:KnowledgeEditionIssue[];pendingVerification:PendingNote[];complete:boolean};
+export type KnowledgeEditionVerificationOptions={
+ /** 测试用：每通道在途章节上限，缺省 KNOWLEDGE_MODEL_CHANNEL_MAX（16，未改）。 */
+ channelMax?:number;
+ checkpointRequeueMs?:readonly number[];
+ sleep?:(ms:number)=>Promise<void>;
+};
+type ProgressFn=(p:{doneBatches:number;totalBatches:number;pass:number})=>void|Promise<void>;
+
+/** 正式末段：仅处理疑点、空正文和已记录失败；每页独立保存，局部失败保留原稿继续。只返回正文（旧调用方与测试沿用）。 */
+export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:KnowledgeRouteEvidence,invoke=invokeKnowledgePublicationRoutes,onProgress?:ProgressFn,options:KnowledgeEditionVerificationOptions={}){
+ return (await verifyKnowledgeEditionManuscriptsDetailed(bodies,storage,invoke,onProgress,options)).bodies;
+}
+
+/**
+ * 同上，但直接返回 verified.json 中的问题、待验证与完成标记，调用方不必把几十 MB 的 verified.json 再读回来。
+ * verified.json 的写入内容与格式不变（其他读者照旧）。
+ */
+export async function verifyKnowledgeEditionManuscriptsDetailed(bodies:string[],storage:KnowledgeRouteEvidence,invoke=invokeKnowledgePublicationRoutes,onProgress?:ProgressFn,options:KnowledgeEditionVerificationOptions={}):Promise<KnowledgeEditionVerificationResult>{
  const evidence=guardKnowledgeEditionEvidence(storage);
  const manifest=await evidence.read(`${evidence.prefix}/input.json`);
  if(manifest){
@@ -21,7 +45,10 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
  if(manifest&&manifest.digest!==digest)throw Error('最终核实输入清单损坏，保留旧回执');
  if(!manifest)await evidence.save(`${evidence.prefix}/input.json`,{digest,bodies});
  const prior=await evidence.read(`${evidence.prefix}/verified.json`);
- if(prior){if(prior.digest!==digest)throw Error('最终核实原稿变化，保留旧回执');return prior.bodies as string[];}
+ if(prior){
+  if(prior.digest!==digest)throw Error('最终核实原稿变化，保留旧回执');
+  return {bodies:prior.bodies as string[],issues:prior.issues||[],pendingVerification:prior.pendingVerification||[],complete:prior.complete!==false};
+ }
  const prepared=bodies.map(body=>{
   const empty=knowledgeModulesFromMarkdown(body).modules.filter(m=>!hasKnowledgeBody(m.body));
   return empty.length?markKnowledgeEditionGap(body,`以下章节只有标题或正文为空，请围绕原章节及原稿上下文联网补齐，不删除章节：${empty.map(m=>m.headline).join('；')}`):body;
@@ -52,7 +79,12 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
   await progress;
  };
  if(total)await onProgress?.({doneBatches:done,totalBatches:total,pass:3});
- const processPage=async(i:number,channel:'openrouter'|'evolink')=>{
+ // 无需核实的章节（required=false）由原文确定性得出：不经模型、不读写逐章检查点。
+ // 等价性：prepared 只对含空正文模块的章节追加「待核」注释，而该注释必使 required=true，故此类章节 prepared[i]===bodies[i]
+ // 且无空正文模块；原流程对它们的结果恒为 body=原文、verification=null、无问题、无待验证（触发器与标题/术语字段无关，
+ // 末尾「仍有待核疑点」同款判定对原文为空）。旧任务已存的这类 completed/pages 对象保留不读不删；其对象名仍经上面的清单校验。
+ for(let i=0;i<bodies.length;i++)if(!required[i]){result[i]=bodies[i];verifications[i]=null;}
+ const processPage=async(i:number,channel:KnowledgeModelChannel,invoke:typeof invokeKnowledgePublicationRoutes)=>{
   // 原页在任何请求之前保存，已经完成的页在恢复时零调用复用。
   const pageKey=`${evidence.prefix}/pages/${i}.json`;
   const completedKey=evidence.listKeys ? `${completedPrefix}${i}.json` : pageKey;
@@ -166,27 +198,73 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
   result[i]=body;verifications[i]=verification;pageIssues[i]=localIssues;pagePending[i]=localPending;
   if(required[i])await completed();
  };
- // 章与章之间可独立检索/修订；同章仍须先拿到检索结果。各首选供应商按本通道章数动态并发（≤通道上限）。
+ // 章与章之间可独立检索/修订；同章仍须先拿到检索结果。
+ // 两通道共用一个待办池：每章按交替顺序标记首选通道（首个待核章从 EvoLink 起，GLM@EvoLink 首发），首选通道先领；
+ // 某通道在途已满、另一通道有空位时，空位可领它名下尚未开始的章节（慢通道不再拖住快通道）。
+ // 领取只决定新建请求用哪个通道：已存 request.json 的章节仍按原请求回放（processPage 内 old?.request||request）。
+ const channels=['evolink','openrouter'] as const;
+ const otherChannel=(c:KnowledgeModelChannel):KnowledgeModelChannel=>c==='evolink'?'openrouter':'evolink';
+ type Item={index:number;preferred:KnowledgeModelChannel;requeues:number};
+ const queues:Record<KnowledgeModelChannel,Item[]>={evolink:[],openrouter:[]};
  let questionIndex=0;
- const routeByPage=required.map((needs,i)=>needs?questionIndex++%2:i%2);
- let stopped=false;
- // 首个待核页从 EvoLink 起（GLM@EvoLink 首发），其后两通道交替；各页仍可经路由回落到另一通道与 DeepSeek。
- const work=(['evolink','openrouter'] as const).flatMap((channel,routeIndex)=>{
-  const indices=bodies.map((_,i)=>i).filter(i=>routeByPage[i]===routeIndex);
-  // 先补缺项；已完成的批次只为最终合稿取正文，不计进度、不经过模型。
-  indices.sort((a,b)=>Number(indexed.has(a))-Number(indexed.has(b)));
-  let next=0;
-  return Array.from({length:knowledgeStageConcurrency(indices.length,{max:KNOWLEDGE_MODEL_CHANNEL_MAX[channel]})},async()=>{
-   while(!stopped&&next<indices.length){
-    try{await processPage(indices[next++]!,channel);}catch(error){stopped=true;throw error;}
+ for(let i=0;i<bodies.length;i++)if(required[i]){
+  const preferred=channels[questionIndex++%2]!;
+  queues[preferred].push({index:i,preferred,requeues:0});
+ }
+ // 先补缺项；已完成的批次只为最终合稿取正文，不计进度、不经过模型（稳定排序，保留原交替顺序）。
+ for(const channel of channels)queues[channel].sort((a,b)=>Number(indexed.has(a.index))-Number(indexed.has(b.index)));
+ const sleep=options.sleep??((ms:number)=>new Promise<void>(resolve=>setTimeout(resolve,ms)));
+ const requeueMs=options.checkpointRequeueMs??KNOWLEDGE_VERIFICATION_CHECKPOINT_REQUEUE_MS;
+ // 每通道在途章节上限维持原值（16），本次不改并发。
+ const limit=(channel:KnowledgeModelChannel)=>Math.max(1,Math.floor(options.channelMax??KNOWLEDGE_MODEL_CHANNEL_MAX[channel]));
+ const inFlight:Record<KnowledgeModelChannel,number>={evolink:0,openrouter:0};
+ let listeners:(()=>void)[]=[];
+ const changed=()=>{const wake=listeners;listeners=[];for(const resolve of wake)resolve();};
+ const nextChange=()=>new Promise<void>(resolve=>listeners.push(resolve));
+ let running=0,delayed=0,stopped=false,failure:{error:unknown}|null=null;
+ const runs:Promise<void>[]=[];
+ const queued=()=>queues.evolink.length+queues.openrouter.length;
+ const take=(channel:KnowledgeModelChannel)=>{
+  if(queues[channel].length)return queues[channel].shift();
+  const other=otherChannel(channel);
+  // 对方仍有空位时由对方自己领，避免两边抢同一批首发；对方满载才接手。
+  if(queues[other].length&&inFlight[other]>=limit(other))return queues[other].shift();
+  return undefined;
+ };
+ const run=async(item:Item,channel:KnowledgeModelChannel)=>{
+  try{await processPage(item.index,channel,invoke);}
+  catch(error){
+   // 检查点存取瞬态失败：本章放回队尾稍后重试，其他章继续。重试时已存 request.json 原样回放、
+   // 路由回执按对象名复用，未闭合回执仍由路由层拦住，不会多买。不变量错误（原稿变化、身份不一致、取消）立即整单停。
+   const delay=isTransientEditionCheckpointError(error)?requeueMs[item.requeues]:undefined;
+   if(delay!==undefined&&!stopped){
+    item.requeues++;delayed++;
+    void sleep(delay).then(()=>{delayed--;if(!stopped)queues[item.preferred].push(item);changed();});
+   }else{
+    if(!failure)failure={error};
+    stopped=true;
    }
-  });
- });
- const settled=await Promise.allSettled(work);
- const failed=settled.find((r):r is PromiseRejectedResult=>r.status==='rejected');
- if(failed)throw failed.reason;
+  }finally{
+   inFlight[channel]--;running--;changed();
+  }
+ };
+ const dispatch=async(channel:KnowledgeModelChannel)=>{
+  for(;;){
+   if(stopped)return;
+   if(!queued()){if(!delayed&&!running)return;await nextChange();continue;}
+   if(inFlight[channel]>=limit(channel)){await nextChange();continue;}
+   const item=take(channel);
+   if(!item){await nextChange();continue;}
+   inFlight[channel]++;running++;
+   runs.push(run(item,channel));
+   changed();
+  }
+ };
+ await Promise.all(channels.map(dispatch));
+ await Promise.allSettled(runs);
+ if(failure)throw (failure as {error:unknown}).error;
  const issues=pageIssues.flat(),pendingVerification=pagePending.flat();
  if(total)await onProgress?.({doneBatches:total,totalBatches:total,pass:4});
  await evidence.save(`${evidence.prefix}/verified.json`,{digest,bodies:result,verifications,issues,pendingVerification,complete:issues.length===0,skipped:total===0});
- return result;
+ return {bodies:result,issues,pendingVerification,complete:issues.length===0};
 }

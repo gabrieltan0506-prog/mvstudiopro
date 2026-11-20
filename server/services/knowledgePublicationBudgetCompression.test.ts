@@ -3,7 +3,7 @@ import { KNOWLEDGE_RESEARCH_MARKER } from "../../shared/knowledgeResearch";
 const state = vi.hoisted(() => ({ jobs: new Map<string, any>() }));
 vi.mock("../jobs/repository", async importOriginal => ({ ...await importOriginal<any>(), getJobByIdStrict: vi.fn(async (id: string) => state.jobs.get(id) || null) }));
 vi.mock("./gcs", async importOriginal => ({ ...await importOriginal<any>(), getGcsBucketName: () => "test", signGsUriV4ReadUrl: (uri: string) => uri.replace("gs://", "https://storage.googleapis.com/") }));
-vi.mock("./postProdMediaSource", async importOriginal => ({ ...await importOriginal<any>(), loadSucceededJobOutputSources: async () => ({ objects: new Set(), urls: new Set() }), resolveRegisteredPostProdMediaSource: async ({ source }: { source: string }) => source.replace("https://storage.googleapis.com/", "gs://") }));
+vi.mock("./postProdMediaSource", async importOriginal => ({ ...await importOriginal<any>(), loadSucceededJobOutputSources: async () => ({ objects: new Set(), urls: new Set() }), loadSucceededJobOutputSourcesForJobs: async () => ({ objects: new Set(), urls: new Set() }), resolveRegisteredPostProdMediaSource: async ({ source }: { source: string }) => source.replace("https://storage.googleapis.com/", "gs://") }));
 import { synchronizedKnowledgeCardSource } from "../../shared/knowledgeCardEditableLayout";
 import { layoutFromSource } from "../../shared/editableLayout";
 import { compileKnowledgeEditions } from "../../shared/knowledgeCardEdition";

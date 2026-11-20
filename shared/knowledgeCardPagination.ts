@@ -12,6 +12,14 @@ import { stripKnowledgeCardPageRefs } from "./knowledgeCardPageRefs.js";
 import { knowledgeEditionParts } from './knowledgeCardEdition';
 import { planKnowledgeTopicImages, readKnowledgeTopicTitles, type KnowledgeTopicImage } from './knowledgeTopicImagePlan';
 import { attachKnowledgeTextModules } from './knowledgeTextAttachment';
+import { knowledgePlanCache } from './knowledgePlanCache';
+
+export const knowledgeCardPagesCache = knowledgePlanCache<Map<string, KnowledgeCardPagePlan>>();
+let knowledgeCardPagesComputed = 0;
+/** 测试用：分页实际计算次数（含不同提炼模型）。 */
+export const knowledgeCardPagesComputeCount = () => knowledgeCardPagesComputed;
+export const knowledgeEditionImagePlanCache = knowledgePlanCache<KnowledgeEditionImagePlan | null>();
+export const knowledgeEditionIllustratedPagesCache = knowledgePlanCache<ReturnType<typeof computeKnowledgeEditionIllustratedPages>>();
 
 export const KNOWLEDGE_CARD_TARGET_MIN_PAGES = 4;
 export const KNOWLEDGE_CARD_TARGET_MAX_PAGES = 8;
@@ -436,6 +444,19 @@ export function planKnowledgeCardPages(
   text: string,
   distillModel?: string | null,
 ): KnowledgeCardPagePlan {
+  // 缓存键含提炼模型原值（null/undefined/字符串区分开），计价与模型档位随之确定。
+  // 先按原文命中（同一字符串对象比较为常数时间），再按模型取；不拼接长键，避免每次比较整串。
+  const byModel = knowledgeCardPagesCache.get(typeof text === 'string' ? text : String(text || ''), () => new Map());
+  const modelKey = `${typeof distillModel}:${distillModel ?? ''}`;
+  let plan = byModel.get(modelKey);
+  if (!plan) { knowledgeCardPagesComputed++; plan = computeKnowledgeCardPages(text, distillModel); byModel.set(modelKey, plan); }
+  return { ...plan, pages: [...plan.pages] };
+}
+
+function computeKnowledgeCardPages(
+  text: string,
+  distillModel?: string | null,
+): KnowledgeCardPagePlan {
   const model = resolveKnowledgeCardDistillModel(distillModel);
   // 两档手册：图数按主题定（精华版≤30、完整版≤48），图内≤1200字，图外细节进内文。
   const topics = knowledgeEditionImagePlan(String(text || ''));
@@ -497,6 +518,11 @@ export type KnowledgeEditionImagePlan = {
  * 〔参考原页〕标记与内部约束先剥离，不计入图内字数与页费。
  */
 export function knowledgeEditionImagePlan(markdown: string): KnowledgeEditionImagePlan | null {
+  const plan = knowledgeEditionImagePlanCache.get(String(markdown || ''), () => computeKnowledgeEditionImagePlan(markdown));
+  return plan && { ...plan, images: plan.images.map(i => ({ ...i, headlines: [...i.headlines] })), textModules: plan.textModules.map(m => ({ ...m })) };
+}
+
+function computeKnowledgeEditionImagePlan(markdown: string): KnowledgeEditionImagePlan | null {
   const edition = knowledgeEditionParts(String(markdown || ''));
   if (!edition) return null;
   const clean = (body: string) => stripKnowledgeCardInternalDirectives(stripKnowledgeCardPageRefs(body)).trim();
@@ -520,6 +546,11 @@ export function knowledgeEditionImageChars(plan: KnowledgeEditionImagePlan | nul
  * 排版源与核实回执共用此函数，保证逐页一致。
  */
 export function knowledgeEditionIllustratedPages(markdown: string) {
+  const pages = knowledgeEditionIllustratedPagesCache.get(String(markdown || ''), () => computeKnowledgeEditionIllustratedPages(markdown));
+  return pages && pages.map(p => ({ ...p }));
+}
+
+function computeKnowledgeEditionIllustratedPages(markdown: string) {
   const plan = knowledgeEditionImagePlan(markdown);
   if (!plan) return null;
   const textModules = plan.textModules.filter(m => m.body.trim());

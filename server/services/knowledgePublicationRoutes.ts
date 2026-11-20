@@ -920,6 +920,7 @@ export async function invokeKnowledgePublicationRoutes(
         let headerIdle = false;
         let lastContentAt = 0;
         let keepaliveOnly = false;
+        let settleHeartbeatRef: () => Promise<void> = async () => undefined;
         try {
             const controller = new AbortController();
             // 等响应头也算「无字节」：超过无心跳阈值未回响应头即判断流（原固定 120 秒）。
@@ -935,13 +936,23 @@ export async function invokeKnowledgePublicationRoutes(
             const retryAfterHeader = response.ok ? null : response.headers.get("retry-after");
             let text: string;
             let heartbeat = 0;
+            // 心跳文件只是诊断与续期辅助（1120）：写入尽力而为，不阻塞读流、失败不中断模型流；
+            // 失败只记日志，下一个字节到来时重试。同一时刻最多一笔在途写入。
+            // pending 检查点与最终回执的写入仍照常必须成功（防重复付费依据），不受此影响。
+            const heartbeatWrite = { inFlight: undefined as Promise<void> | undefined };
             const onBytes = async () => {
-              if (Date.now() - heartbeat > 15000) {
-                // at = 最后收到任何字节（含推理增量与保活注释）；lastContentAt = 最后收到正文增量（区分「仅保活/仅推理」）。
-                await evidence.save(`${evidence.prefix}/${route}-heartbeat.json`, { at: new Date().toISOString(), ...(lastContentAt ? { lastContentAt: new Date(lastContentAt).toISOString() } : {}), requestDigest });
-                heartbeat = Date.now();
-              }
+              if (heartbeatWrite.inFlight || Date.now() - heartbeat <= 15000) return;
+              const startedAt = Date.now();
+              // at = 最后收到任何字节（含推理增量与保活注释）；lastContentAt = 最后收到正文增量（区分「仅保活/仅推理」）。
+              heartbeatWrite.inFlight = Promise.resolve()
+                .then(() => evidence.save(`${evidence.prefix}/${route}-heartbeat.json`, { at: new Date(startedAt).toISOString(), ...(lastContentAt ? { lastContentAt: new Date(lastContentAt).toISOString() } : {}), requestDigest }))
+                .then(() => { heartbeat = startedAt; },
+                  error => deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=heartbeat_write_failed next=retry_on_next_bytes detail=${knowledgeRouteLogDetail(error instanceof Error ? error.message : error)}`))
+                .finally(() => { heartbeatWrite.inFlight = undefined; });
             };
+            /** 收尾前等在途心跳落定（失败已记日志），保证心跳文件不会晚于回执写入。 */
+            const settleHeartbeat = async () => { await heartbeatWrite.inFlight?.catch(() => undefined); };
+            settleHeartbeatRef = settleHeartbeat;
             if (response.ok && (response.headers.get("content-type") || "").includes("text/event-stream")) {
               if (!response.body) throw new Error("上游流为空");
               // 仅保活看门狗：从响应头起算，每收到实质增量重置；超时即中断本发（按无心跳处理）。
@@ -963,6 +974,7 @@ export async function invokeKnowledgePublicationRoutes(
               });
               } finally { clearInterval(keepaliveWatch); }
             } else text = await readKnowledgeResponseBody(response, controller, onBytes, deps.idleTimeoutMs);
+            await settleHeartbeat();
             receipt = { requestDigest, route, model, state: "received", purchaseStartedAt, endedAt: new Date().toISOString(), request: storedBody, response: { status, text: text.split(apiKey).join("[REDACTED]") }, imageSources: images, ...degraded, ...(retryAfterHeader ? { retryAfter: retryAfterHeader } : {}) };
             gateOutcome = classifyKnowledgeRouteFailure({ status: status!, text: "" }) === "rate_limited" ? "rate_limited" : "ok";
             releaseGate();
@@ -972,6 +984,7 @@ export async function invokeKnowledgePublicationRoutes(
             releaseGate();
             throw transportError;
           }
+          await settleHeartbeatRef();
           // 无心跳（等响应头或读正文连续无字节）= 可能被上游排队/放慢：本通道本任务并发减半，再按断流规矩处理。
           const noHeartbeat = headerIdle || keepaliveOnly || /秒无数据|正文失联/.test(transportError instanceof Error ? transportError.message : "");
           gateOutcome = noHeartbeat ? "rate_limited" : "error";

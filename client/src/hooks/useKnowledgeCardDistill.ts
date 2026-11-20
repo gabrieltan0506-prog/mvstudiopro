@@ -3,11 +3,11 @@
  * 1119 C0：自 PlatformPage.tsx 原样搬出（零逻辑改动），便于后续评审 diff；依赖全部经 deps 转交。
  */
 import { assertKnowledgeCardIllustrationSelection } from "@shared/knowledgeCardIllustrationSelection";
-import { knowledgeCardFullManuscript, knowledgeCardInputFingerprint, knowledgeCardInputKey } from "@shared/knowledgeCardSourceIdentity";
+import { knowledgeCardFullManuscript } from "@shared/knowledgeCardSourceIdentity";
+import { cachedKnowledgeCardPagePlan, isKnowledgeEditionManuscript, knowledgeCardInputIdentityFingerprint, knowledgeCardInputIdentityKey, rememberKnowledgeEditionServerPages } from "@/lib/knowledgeCardPreflightCounts";
 import { knowledgeEditionStageLabel, knowledgeCardProgressFromDistill, knowledgeCardStageCounts } from "@/components/platform/KnowledgeCardProgress";
 import { knowledgeCardRecoveryMessage, knowledgeCardTrackedJobId, submitKnowledgeCardOnce } from "@/lib/knowledgeCardTrackedSubmission";
 import { knowledgeEditionParts } from "@shared/knowledgeCardEdition";
-import { planKnowledgeCardPages } from "@shared/knowledgeCardPagination";
 import { pollJobUntilTerminal } from "@/lib/jobs";
 import { toast } from "@/lib/platformToast";
 import { useEffect, useState } from "react";
@@ -79,11 +79,12 @@ export function useKnowledgeCardDistill(deps: UseKnowledgeCardDistillDeps) {
    * 上传后与「点生成时仍有待处理文件」两条路径共用，避免逻辑分叉。
    */
   /** 完整版长稿 → 精华版：后台任务（DeepSeek，几美分，不扣积分），带进度；结果缓存，切回完整版不再重算 */
-  const customNotePaginationKey = knowledgeCardInputKey({ owner: workbenchUserKey, text: customNoteIllustrationMarkdown, full: knowledgeCardFullManuscript(customNoteText, customNoteFullMarkdown, customNoteCompactMarkdown), level: customNoteDetailLevel, template: customNoteInfographicTemplateId, model: customNoteDistillModel });
+  // 1120 L8：比较键只含正文编号（同内容同编号），不再每次渲染把全文 JSON 化；指纹仍是原全文键的 SHA，异步算一次并缓存
+  const customNotePaginationKey = knowledgeCardInputIdentityKey({ owner: workbenchUserKey, text: customNoteIllustrationMarkdown, full: knowledgeCardFullManuscript(customNoteText, customNoteFullMarkdown, customNoteCompactMarkdown), level: customNoteDetailLevel, template: customNoteInfographicTemplateId, model: customNoteDistillModel });
   const [paginationFingerprint, setPaginationFingerprint] = useState<{ key: string; hash: string } | null>(null);
   useEffect(() => {
     let stale = false;
-    void knowledgeCardInputFingerprint(customNotePaginationKey).then(hash => {
+    void knowledgeCardInputIdentityFingerprint(customNotePaginationKey).then(hash => {
       if (!stale) setPaginationFingerprint({ key: customNotePaginationKey, hash });
     }).catch(() => { if (!stale) setPaginationFingerprint(null); });
     return () => { stale = true; };
@@ -155,6 +156,9 @@ export function useKnowledgeCardDistill(deps: UseKnowledgeCardDistillDeps) {
         throw new Error(KNOWLEDGE_CARD_DERIVE_STALE_MESSAGE);
       }
       if (out.distillModel) setCustomNotePreparedModel(out.distillModel);
+      // 服务端准备阶段已按同一分页器算好两档图片张数：登记到前端缓存，选档面板直接取用
+      const counts=(out as {editionPageCounts?:Record<string,{imagePages?:number|null}>|null}).editionPageCounts;
+      if(counts){rememberKnowledgeEditionServerPages(out.fullEditionMarkdown,counts.full?.imagePages);rememberKnowledgeEditionServerPages(compact,counts.concise?.imagePages);}
       if(out.fullEditionMarkdown){
         knowledgeVerifiedEditionRef.current=out.verificationProcessed?{jobId:derivedJobId,full:out.fullEditionMarkdown,concise:compact}:null;
         setCustomNoteFullMarkdown(out.fullEditionMarkdown);
@@ -238,8 +242,10 @@ export function useKnowledgeCardDistill(deps: UseKnowledgeCardDistillDeps) {
       const compact = await deriveCompactFromFull(customNoteFullMarkdown);
       const selected=next==='full'?(customNoteFullMarkdownRef.current||customNoteFullMarkdown):compact;
       setCustomNoteText(selected);
-      const plan = planKnowledgeCardPages(selected, customNoteDistillModel);
-      toast.success(`${next==='full'?'完整版·多图少字':'精华版·少图多字'} · ${plan.pageCount} 张图片 · ${plan.credits} 积分`);
+      const editionLabel = next==='full'?'完整版·多图少字':'精华版·少图多字';
+      // 切档零重复解析：张数取自按正文缓存的规划；两档未整理好的原稿不报张数
+      if (!isKnowledgeEditionManuscript(selected)) toast.success(`${editionLabel} · 两档整理完成后给出张数`);
+      else { const plan = cachedKnowledgeCardPagePlan(selected, customNoteDistillModel); toast.success(`${editionLabel} · ${plan.pageCount} 张图片 · ${plan.credits} 积分`); }
     } catch (err) {
       // 审查 P1：派生失败时下拉不能停在「精华版」而文本框是完整版——档位回退，与上传路径一致
       const msg = String((err as { message?: string })?.message || "精华版派生失败");

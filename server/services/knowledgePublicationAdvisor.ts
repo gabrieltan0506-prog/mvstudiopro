@@ -1,7 +1,7 @@
 import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeFinalRevisionChannel,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
 import { KNOWLEDGE_COMPRESSION_TARGET_RATIO, KNOWLEDGE_IMAGE_PRIMARY_INSTRUCTIONS, KNOWLEDGE_READING_CONTRACT, knowledgeBudgetInstructions, knowledgeBudgetOutputContract, knowledgeCompressionInstructions, knowledgeExpansionInstructions, knowledgeFinalCompressionMarks, knowledgeReadingCharBudgets, knowledgeReadingOverflow, type KnowledgeReadingOverflow } from "../../shared/knowledgeEditionBudget";
 import { KNOWLEDGE_VERIFICATION_POLICY, KNOWLEDGE_VERIFICATION_EDIT_POLICY, knowledgeVerificationTriggers, knowledgeVerificationQueries, knowledgeVerificationSourceEvidence } from './knowledgeVerificationPolicy';
-import { resolveKnowledgePublicationImages } from "./knowledgePublicationImages";
+import { resolveKnowledgePublicationImages, knowledgePublicationImageJobIds } from "./knowledgePublicationImages";
 import { KNOWLEDGE_RESEARCH_INSTRUCTIONS, KNOWLEDGE_RESEARCH_MARKER } from "../../shared/knowledgeResearch";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -37,7 +37,7 @@ import {
 } from "./gcs";
 import {
   resolveRegisteredPostProdMediaSource,
-  loadSucceededJobOutputSources,
+  loadSucceededJobOutputSourcesForJobs,
 } from "./postProdMediaSource";
 
 /** 固定1017，图文同合同；通道顺序由专用路由保留逐跳证据。 */
@@ -124,9 +124,11 @@ export async function validateKnowledgePublicationAccess(
   }
   if (document.publication.source.readingPreparation) await loadKnowledgeReadingNotesForReview(owner,document.publication.source.readingPreparation,document.publication.source);
   const selected = knowledgeReviewBatches(document.publication.source)[context.batchIndex];
-  // 本人成功任务产物登记（整表分页扫描）在本次核验内只读一次：配图解析与归属核对共用同一份，不跨请求缓存（权威登记以本次读取为准）。
-  let jobSources: ReturnType<typeof loadSucceededJobOutputSources> | undefined;
-  const loadJobSources = () => (jobSources ??= loadSucceededJobOutputSources(String(owner), getGcsBucketName()));
+  // 本批配图任务的产物登记（按任务编号定向读取，本人 + 已成功，只取 id/output）在本次核验内只读一次：配图解析与归属核对共用同一份，
+  // 不跨请求缓存。原先每批整表扫描本人全部成功任务 output（含 MB 级提炼稿），56 批即 56 次全表扫描。
+  let jobSources: ReturnType<typeof loadSucceededJobOutputSourcesForJobs> | undefined;
+  const imageJobIds = knowledgePublicationImageJobIds(document.publication.source, selected, document.publication.imageReplacements);
+  const loadJobSources = () => (jobSources ??= loadSucceededJobOutputSourcesForJobs(String(owner), getGcsBucketName(), imageJobIds));
   const resolvedSource = await resolveKnowledgePublicationImages(owner, document.publication.source, selected, {
     job: getJobByIdStrict,
     canonical: async (o: number, url: string) => { const s = await loadJobSources(); return resolveRegisteredPostProdMediaSource({ userId: String(o), source: url }, undefined, { jobObjects: s.objects, jobUrls: s.urls }); },
