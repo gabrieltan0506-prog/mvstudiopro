@@ -403,16 +403,30 @@ function clearJobHeartbeat(jobId: string | null | undefined): void {
 const STALL_CHECK_INTERVAL_MS = 15_000;
 
 /** 仅当前 worker 持有期间续租；数据库写入成功才算心跳，结束后停止续租。 */
+/**
+ * 1120：单次心跳写库最长等待。原实现只靠 pending 自锁，一次写库挂住（无语句超时）pending 永不复位，
+ * 此后再也不心跳，任务被判死。超时即放弃本次、复位 pending，下一拍照常；迟到的结果不再记账。
+ */
+export const WORKER_HEARTBEAT_WRITE_TIMEOUT_MS = 20_000;
 function startWorkerHeartbeat(jobId: string, stallMs: number, persist = touchJobRunningUpdatedAt): () => void {
   let pending = false;
   let stopped = false;
+  let generation = 0;
   const beat = () => {
     if (pending || stopped) return;
     pending = true;
+    const mine = ++generation;
     const sentAt = Date.now();
+    const giveUp = setTimeout(() => {
+      if (generation === mine) { generation++; pending = false; }
+    }, WORKER_HEARTBEAT_WRITE_TIMEOUT_MS);
+    giveUp.unref?.();
     void persist(jobId).then((saved) => {
-      if (saved && !stopped) jobHeartbeats.set(jobId, sentAt);
-    }).catch(() => {}).finally(() => { pending = false; });
+      if (saved && !stopped && generation === mine) jobHeartbeats.set(jobId, sentAt);
+    }).catch(() => {}).finally(() => {
+      clearTimeout(giveUp);
+      if (generation === mine) pending = false;
+    });
   };
   const timer = setInterval(beat, Math.max(1_000, Math.min(30_000, stallMs / 3)));
   timer.unref?.();
@@ -427,7 +441,9 @@ export function startPlatformExecutionHeartbeat(
   const input = job.input;
   const edition = job.type==="platform" && isRecord(input) && input.action==="knowledge_card_derive_level"
     && isRecord(input.params) && input.params.editionVersion===2;
-  if (!edition && (distillStallMs !== undefined || (job.type==="audio" && isRecord(input) && input.action==="song_operation"))) return;
+  // 1120：提炼与两档准备同款——单段长请求期间也每 30 秒独立续租，不再因某段迟迟无进度被判死（第 358 段事故）。
+  const distill = job.type==="platform" && isRecord(input) && input.action==="knowledge_card_distill";
+  if (!edition && !distill && (distillStallMs !== undefined || (job.type==="audio" && isRecord(input) && input.action==="song_operation"))) return;
   return startWorkerHeartbeat(job.id,distillStallMs ?? timeoutMs,persist);
 }
 
@@ -4020,6 +4036,8 @@ async function processPlatformJob(
         epubPdfs: prepared.convertedPdfs,
         // 1119 F1：分段计时随成品保留（仅 Debug 面板读取）；不进任何摘要/扣费键
         distillStageAt: { ...distillStageAt },
+        // 1120：提炼服务若报告缺段（distillGaps），原样透传进任务 output 与最终结果，不丢
+        ...("distillGaps" in (prepared as object) ? { distillGaps: (prepared as { distillGaps?: unknown }).distillGaps } : {}),
       };
       return await finishKnowledgeCardProduction(platformJobId!, Number(jobUserId), {
         version: 1, output,
