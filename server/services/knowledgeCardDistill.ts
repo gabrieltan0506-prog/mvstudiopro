@@ -2216,12 +2216,12 @@ export function knowledgeCardResumablePageSelector(modelName: string, abortSigna
   const store = context.resume || context.evidence;
   const model = resolveKnowledgeCardDistillModel(modelName);
   const keyOf = (identity: unknown) => `${store.prefix}/page-selection/${createHash("sha256").update(JSON.stringify(identity)).digest("hex")}.json`;
-  const sheetIdentity = (sheets: KnowledgeCardContactSheet[]) => sheets.map((sheet) => ({ gcsUri: sheet.gcsUri, pageNumbers: sheet.pageNumbers }));
+  const sheetIdentity = (sheets: Pick<KnowledgeCardContactSheet, "gcsUri" | "pageNumbers">[]) => sheets.map((sheet) => ({ gcsUri: sheet.gcsUri, pageNumbers: sheet.pageNumbers }));
   const readSaved = async (identity: unknown): Promise<KnowledgeCardPageSelection[] | null> => {
     const saved = await store.read(keyOf(identity));
     return saved && JSON.stringify(saved.identity) === JSON.stringify(identity) && Array.isArray(saved.pages) ? saved.pages as KnowledgeCardPageSelection[] : null;
   };
-  const readLegacy = (sheets: KnowledgeCardContactSheet[], pageCount: number) =>
+  const readLegacy = (sheets: Pick<KnowledgeCardContactSheet, "gcsUri" | "pageNumbers">[], pageCount: number) =>
     readSaved({ version: KNOWLEDGE_PAGE_SELECTION_LEGACY_VERSION, model, pageCount, sheets: sheetIdentity(sheets) });
   const groupIdentity = (group: KnowledgeCardContactSheet[], pageCount: number) => ({ version: KNOWLEDGE_PAGE_SELECTION_CACHE_VERSION, model, pageCount, sheets: sheetIdentity(group) });
   const groupCache: KnowledgeCardTriageGroupCache = {
@@ -2240,19 +2240,15 @@ export function knowledgeCardResumablePageSelector(modelName: string, abortSigna
     return pages;
   };
   return Object.assign(select, {
-    stream: (pageCount: number, totalSheets: number, onProgress?: KnowledgeCardTriageProgress): KnowledgeCardPageSelectionStream => {
+    stream: async (pageCount: number, totalSheets: number, onProgress: KnowledgeCardTriageProgress, identities: Pick<KnowledgeCardContactSheet, "gcsUri" | "pageNumbers">[]): Promise<KnowledgeCardPageSelectionStream | KnowledgeCardPageSelection[]> => {
+      const legacy = await readLegacy(identities, pageCount);
+      if (legacy) return legacy;
       let failedGroups = 0;
-      const all: KnowledgeCardContactSheet[] = [];
       const run = createKnowledgeCardPageTriageRun(modelName, abortSignal, { onGroupFailed: () => { failedGroups += 1; }, groupCache }, pageCount, totalSheets, onProgress);
       return {
-        add: (position, sheet) => { all[position] = sheet; run.add(position, sheet); },
-        abandon: run.abandon,
-        failure: run.failure,
+        ...run,
         async finish() {
           const pages = await run.finish();
-          // 流式只在有目录页需要新渲染时使用；目录图列表不可读时也可能是旧书，v1 整本缓存仍优先
-          const legacy = await readLegacy(all, pageCount);
-          if (legacy) return legacy;
           if (failedGroups) onIncomplete?.();
           return pages;
         },
