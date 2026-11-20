@@ -47,14 +47,25 @@ export const KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY=16;
  * 任一条失败即停止领取新条目，等在途全部收口后抛出序号最小的那条错误（与串行时最先失败的一条一致），
  * 不留后台写入、不报部分成功；重跑按同键同内容覆盖写，幂等。
  */
-async function saveKnowledgeEditionReceipts(evidence:KnowledgeRouteEvidence,entries:readonly (readonly [string,unknown])[]){
+async function saveKnowledgeEditionReceipts(evidence:KnowledgeRouteEvidence,entries:readonly (readonly [string,unknown])[],onCount?:(done:number,total:number)=>Promise<void>){
   // 用对象承载首个失败：直接用 let 变量时，TS 会把闭包内的赋值在外层误收窄为 never。
+  let done=0, lastReport=Date.now();
+  let report=Promise.resolve();
+  if(onCount && entries.length)await onCount(0,entries.length);
   let next=0;const state:{failure?:{index:number;error:unknown}}={};
   const record=(index:number,error:unknown)=>{const prior=state.failure as {index:number;error:unknown}|undefined;if(!prior||index<prior.index)state.failure={index,error};};
   await Promise.all(Array.from({length:Math.min(KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY,entries.length)},async()=>{
     while(!state.failure&&next<entries.length){
       const index=next++;
-      try{await evidence.save(entries[index]![0],entries[index]![1]);}
+      try{
+        await evidence.save(entries[index]![0],entries[index]![1]);
+        const count=++done;
+        if(onCount && (count===entries.length || Date.now()-lastReport>=3000)){
+          lastReport=Date.now();
+          report=report.then(()=>onCount(count,entries.length));
+          await report;
+        }
+      }
       catch(error){record(index,error);}
     }
   }));
@@ -64,10 +75,13 @@ async function saveKnowledgeEditionReceipts(evidence:KnowledgeRouteEvidence,entr
 /** 同一底稿只整理一次；两版由同一份模块确定性编译，恢复读取原回执。 */
 export async function prepareKnowledgeCardEditions(params:{
   sourceMarkdown:string;model?:string;targetSections?:number;evidence:KnowledgeRouteEvidence;abortSignal?:AbortSignal;
-  onProgress?:(p:{doneBatches:number;totalBatches:number;pass:number})=>void|Promise<void>;
+  onProgress?:(p:{doneBatches:number;totalBatches:number;pass:number;step?:string})=>void|Promise<void>;
   invoke?:typeof invokeKnowledgePublicationRoutes;
   measure?:typeof measureKnowledgeBookletFromWorker;
 }) {
+  const reportStep = async (step:string,doneBatches=0,totalBatches=0) => {
+    await params.onProgress?.({pass:4, step, doneBatches, totalBatches});
+  };
   const {sourceMarkdown}=params;
   const evidence=guardKnowledgeEditionEvidence(params.evidence);
   if(!sourceMarkdown.trim())throw Error('缺少知识底稿，未启动整理');
@@ -78,6 +92,7 @@ export async function prepareKnowledgeCardEditions(params:{
     if(prior.compositionVersion!==EDITION_COMPOSITION_VERSION)throw Error('此任务保存的是旧版浓缩结果，已保留原回执；不能当作原逻辑恢复结果或自动重新购买');
     const cached=auditEditionResult(prior.result);
     // 缓存正文不重购；主题命题按已存回执回放，缺回执时只补一次廉价命题（失败回退机械标题）。
+    await reportStep("读取成稿并整理标题");
     const [fullTitled,conciseTitled]=await Promise.all([cached.fullEditionMarkdown,cached.markdown].map(markdown=>
       nameKnowledgeEditionTopics({markdown,model:params.model,evidence,invoke:params.invoke,abortSignal:params.abortSignal})));
     const result={...cached,fullEditionMarkdown:fullTitled!.markdown,markdown:conciseTitled!.markdown};
@@ -201,9 +216,11 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
     existingNotes.add(note);
   }
   const verified=await verifyKnowledgeEditionManuscripts(finalPages,{...evidence,prefix:`${evidence.prefix}/final-verification`},finalInvoke,params.onProgress);
+  await reportStep("合并已核实章节");
   const verifiedModules=verified.flatMap((body,index)=>knowledgeModulesFromMarkdown(body).modules.map(module=>({...module,priority:modules[index]?.priority||'secondary'})));
   const compiled=compileKnowledgeEditions(original.title,verifiedModules);
   // 主题图命题：两档并发各一次廉价批量调用，原始/解析回包永久保存；失败回退机械标题，不阻断。
+  await reportStep("整理完整版和精华版标题");
   const [fullTitled,conciseTitled]=await Promise.all([compiled.full,compiled.concise].map(markdown=>
     nameKnowledgeEditionTopics({markdown,model:params.model,evidence,invoke:finalInvoke,abortSignal:params.abortSignal})));
   const editions={full:fullTitled!.markdown,concise:conciseTitled!.markdown};
@@ -213,11 +230,14 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
   const issues=[...(verification?.issues||[]),...selectionIssues];
   const editionPageCounts:Record<string,{imagePages:number|null;readingPages:number|null;pageBudget?:ReturnType<typeof knowledgeEditionBudgetCheck>}>={};
   for(const [level,markdown] of [['full',editions.full],['concise',editions.concise]] as const){
+    const edition = level === "full" ? "完整版" : "精华版";
+    await reportStep(`保存${edition}正文和章节`);
     await evidence.save(`${evidence.prefix}/pages/${level}/manuscript.json`,{inputDigest,markdown});
     const parts=knowledgeEditionParts(markdown)!;
     editionPageCounts[level]={imagePages:null,readingPages:null};
     await saveKnowledgeEditionReceipts(evidence,Array.from(parts.modules.entries()).map(([index,module])=>
-      [`${evidence.prefix}/pages/${level}/chapters/${index}.json`,{inputDigest,...module,status:hasKnowledgeBody(module.body)?'saved':'pending_content'}] as const));
+      [`${evidence.prefix}/pages/${level}/chapters/${index}.json`,{inputDigest,...module,status:hasKnowledgeBody(module.body)?'saved':'pending_content'}] as const),(done,total)=>reportStep(`保存${edition}正文和章节`,done,total));
+    await reportStep(`计算并保存${edition}图文分页`);
     try{
       const plan=planKnowledgeCardPages(markdown,params.model);
       editionPageCounts[level].imagePages=plan.pageCount;
@@ -225,8 +245,9 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
       const topics=knowledgeEditionImagePlan(markdown);
       editionPageCounts[level].pageBudget=knowledgeEditionBudgetCheck(level,plan.pageCount,topics?.readingChars||0,knowledgeEditionImageChars(topics));
       await saveKnowledgeEditionReceipts(evidence,Array.from(plan.pages.entries()).map(([index,body])=>
-        [`${evidence.prefix}/pages/${level}/images/${index}.json`,{inputDigest,pageIndex:index,body,status:'saved'}] as const));
+        [`${evidence.prefix}/pages/${level}/images/${index}.json`,{inputDigest,pageIndex:index,body,status:'saved'}] as const),(done,total)=>reportStep(`计算并保存${edition}图文分页`,done,total));
     }catch(error){rethrowKnowledgeEditionInvariant(error);issues.push({kind:'pagination',message:knowledgeEditionErrorMessage(error),level});}
+    await reportStep(`测量${edition}文字页数`);
     try{
       const text=parts.modules.filter(m=>m.medium==='text');
       if(level==='full'&&!text.some(m=>hasKnowledgeBody(m.body)))issues.push({kind:'missing_reading',message:'完整版尚无独立文字说明，原稿已保存，不能视为两档整理完成',level});
@@ -237,6 +258,7 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
       await evidence.save(`${evidence.prefix}/pages/${level}/counts.json`,{inputDigest,...editionPageCounts[level]});
     }catch(error){rethrowKnowledgeEditionInvariant(error);issues.push({kind:'pagination',message:knowledgeEditionErrorMessage(error),level});}
   }
+  await reportStep("保存两版成稿");
   const result=auditEditionResult({markdown:editions.concise,fullEditionMarkdown:editions.full,sections:verifiedModules.length,
     targetSections:selection.targetSections,passes:selection.passes,editionVersion:2,verificationProcessed:verification?.complete!==false&&issues.length===0,editionIssues:issues,editionPendingVerification:verification?.pendingVerification||[],editionPageCounts,
     unclassifiedModules:verifiedModules.filter(m=>m.priority==='secondary').length});

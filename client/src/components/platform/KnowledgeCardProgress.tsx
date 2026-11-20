@@ -16,6 +16,10 @@ export type KnowledgeCardProgressState = {
   /** 阶段短语，如「读原稿 12/276 页」「出图 2/5 页」 */
   label?: string;
   /** 当前阶段实际计数，独立于总体阶段权重。 */
+  stepNumber?:number;
+  stepTotal?:number;
+  lastUpdate?: string;
+  checkedAt?: string;
   stageDone?: number;
   stageTotal?: number;
   error?: string;
@@ -91,6 +95,7 @@ export function KnowledgeCardProgress({
       >
         <div className={`h-full rounded-full transition-[width] duration-300 ${fill}`} style={{ width: `${shown}%` }} />
       </div>
+      {state.status === "running" && state.stepNumber && state.stepTotal ? <p>第 {state.stepNumber} 步 / 共 {state.stepTotal} 步 · 本步完成后还剩 {state.stepTotal-state.stepNumber} 步</p> : null}
       <p className="flex flex-wrap items-baseline justify-between gap-x-3 pt-1 text-xs">
         <span>当前阶段 · {sanitizePlatformUserMessage(state.label || (succeeded ? "本步已结束" : "正在处理…"), "正在处理…")}</span>
         <span className="tabular-nums">{counted ? `${state.label?.includes(`${stageDone}/${stageTotal}`) ? "" : `${stageDone}/${stageTotal} · `}${stagePercent}%` : "暂无阶段计数"}</span>
@@ -98,8 +103,11 @@ export function KnowledgeCardProgress({
       <div role="progressbar" aria-label="当前阶段进度" aria-valuemin={0} aria-valuemax={100}
         aria-valuenow={stagePercent} aria-valuetext={counted ? `${stageDone}/${stageTotal} · ${stagePercent}%` : "暂无阶段计数"}
         className="h-1.5 overflow-hidden rounded-full bg-white/10">
-        {counted && <div className="h-full rounded-full bg-cyan-400 transition-[width] duration-300" style={{width:`${stagePercent}%`}} />}
+        {counted ? <div className="h-full rounded-full bg-cyan-400 transition-[width] duration-300" style={{width:`${stagePercent}%`}} /> : state.status === "running" ? <div className="h-full w-full animate-pulse rounded-full bg-cyan-400/40 motion-reduce:animate-none" /> : null}
       </div>
+      {state.status === "running" && state.checkedAt && <p className="text-xs text-white/70">
+        后台最近更新 {state.lastUpdate ? new Date(state.lastUpdate).toLocaleTimeString() : "暂无记录"} · 页面最近查询 {new Date(state.checkedAt).toLocaleTimeString()}
+      </p>}
       {failed && state.error ? <p className="text-xs text-red-300/85">{sanitizePlatformUserMessage(state.error)}</p> : null}
       {stopped && state.error ? <p className="text-xs text-amber-200/85">{sanitizePlatformUserMessage(state.error)}</p> : null}
     </div>
@@ -116,14 +124,20 @@ export function knowledgeCardProgressFromRender(done: number, total: number): nu
   return Math.round(60 + 40 * Math.max(0, Math.min(1, done / total)));
 }
 
+export function knowledgeEditionStageLabel(out?: Record<string, unknown>) {
+  const labels: Record<string,string> = { verifying:"联网核实与修订", revising:"保存核实结果及整理成稿", merging:"汇总知识与疑点", deriving:"整理稿件", finishing:"保存成稿" };
+  if (typeof out?.distillStep === "string" && out.distillStep) return out.distillStep;
+  return labels[String(out?.distillStage)] || "处理中";
+}
+
 /** 老任务会保留上一阶段计数；按阶段选字段，避免统稿误显参考页已完成。 */
 export function knowledgeCardStageCounts(out: {
-  distillStage?: string; distillPhase?: string;
+  distillStage?: string; distillPhase?: string;distillStep?:string;
   distillStageDone?: number; distillStageTotal?: number;
   distillDoneChunks?: number; distillTotalChunks?: number;
 }): Pick<KnowledgeCardProgressState, "stageDone" | "stageTotal"> {
   const stage = out.distillStage || out.distillPhase;
-  if (stage === "refining" || stage === "finishing") return {};
+  if (stage === "refining" || stage === "finishing" || (stage === "revising" && !out.distillStep?.match(/正文和章节|图文分页/))) return {};
   if (["converting", "reading", "selecting", "rendering", "deriving", "merging", "verifying", "revising"].includes(stage || ""))
     return { stageDone: out.distillStageDone, stageTotal: out.distillStageTotal };
   return { stageDone: out.distillDoneChunks, stageTotal: out.distillTotalChunks };
