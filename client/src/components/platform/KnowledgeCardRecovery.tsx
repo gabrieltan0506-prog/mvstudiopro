@@ -28,6 +28,7 @@ export function KnowledgeCardRecovery({disabled,onApply,onStart,onFinish,onProgr
   const [watched,setWatched]=useState("");
   const setWatchProgress = onProgress;
   const [watchStatus,setWatchStatus]=useState("");
+  const [resumeNote,setResumeNote]=useState("");
   useEffect(()=>{
     if(!watched) return;
     onTracking(true);
@@ -80,19 +81,24 @@ export function KnowledgeCardRecovery({disabled,onApply,onStart,onFinish,onProgr
   },[watched,watchVersion,utils,setWatchProgress,onTracking]);
   async function resumeLast(){
     setBusy(true);setError("");setCandidate(null);
+    // 读取期间给出可见提示：大书成稿有十几 MB，读取要一段时间，不能让按钮灰着却没有任何说明。
+    setResumeNote("正在读取上次任务…");
     try {
       const draft=await utils.mvAnalysis.getLastKnowledgeVerificationDraft.fetch(undefined,{staleTime:0});
       if(draft.finished){
+        setResumeNote("上次任务已完成，正在取回成稿（大书需要一些时间）…");
         const value=await utils.mvAnalysis.getKnowledgeCardRecovery.fetch({jobId:draft.jobId},{staleTime:0});
-        if(actions.current.onApply(value)){setOpen(false);setWatched("");}
+        if(actions.current.onApply(value)){setOpen(false);setWatched("");setResumeNote("");}
+        else setResumeNote("成稿已取回但没有回填：请先结束当前任务或出图确认后再点一次。");
         return;
       }
+      setResumeNote("");
       if(!actions.current.onStart(draft))return;
       const {jobId}=await resume.mutateAsync({jobId:draft.jobId});
       setOpen(false);
       autoApplyJob.current=jobId;
       setWatchInput(jobId);setWatched(jobId);setWatchVersion(v=>v+1);
-    }catch(e){setOpen(true);setError(e instanceof Error?e.message:"无法续作，请稍后重试");}
+    }catch(e){setResumeNote("");setOpen(true);setError(e instanceof Error?e.message:"无法续作，请稍后重试");}
     finally{setBusy(false);}
   }
   async function load(more=false) {setBusy(true);setError("");try{const r=await utils.mvAnalysis.listKnowledgeCardRecovery.fetch({cursor:more?cursor??undefined:undefined},{staleTime:0});setItems(old=>Array.from(new Map([...(more?old:[]),...r.items].map(x=>[x.key,x])).values()));setCursor(r.nextCursor);}catch(e){setError(e instanceof Error?e.message:"读取失败，请重试");}finally{setBusy(false);}}
@@ -107,6 +113,7 @@ export function KnowledgeCardRecovery({disabled,onApply,onStart,onFinish,onProgr
   return <div className="contents text-sm" data-knowledge-card-recovery>
     <button type="button" disabled={disabled||busy} aria-expanded={open} className="inline-flex items-center rounded-full border border-cyan-300/40 px-5 py-2.5 text-sm font-semibold text-cyan-100 disabled:opacity-50" onClick={()=>{setOpen(!open);if(!open)void load();}}>恢复上次内容</button>
     <button type="button" disabled={disabled||busy||Boolean(watched)} className="rounded-full border border-cyan-300/40 px-5 py-2.5 text-cyan-100 disabled:opacity-50" onClick={()=>void resumeLast()}>从上次任务续作</button>
+    {resumeNote&&<p role="status" className="order-last basis-full text-xs text-cyan-100">{resumeNote}</p>}
     {open&&<div className="order-last basis-full min-w-0 space-y-3 rounded-xl border border-white/15 bg-black/25 p-4">
       <p className="text-xs text-white/60">选择已完成的正文或图文成品。恢复不会重新生成或扣费。</p>
       <label className="block">后台核实任务编号

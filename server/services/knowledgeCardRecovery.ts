@@ -147,7 +147,7 @@ export async function listKnowledgeCardRecovery(userId: string, cursor?: { at: s
       ...(cursor ? [sql`(${jobs.createdAt},${jobs.id}) < (${new Date(cursor.at)},${cursor.id})`] : [])))
     .orderBy(desc(jobs.createdAt),desc(jobs.id)).limit(41);
   const page=await hydrateStagedManuscriptRows(rows.slice(0,40)), seen=new Set<string>();
-  const items=page.flatMap(row=>{const d=recoveryDraft(row);if(!d||seen.has(d.key))return [];seen.add(d.key);return [{jobId:row.id,key:d.key,title:d.markdown.split('\n').find(x=>x.trim())?.replace(/^#+\s*/,"").slice(0,100)||"知识卡成品",createdAt:row.createdAt.toISOString(),kind:d.image?"图文成品":"正文备份",total:d.image?Number(d.params.notePageTotal)||0:0}];});
+  const items=page.flatMap(row=>{const d=recoveryDraft(row);if(!d||seen.has(d.key))return [];seen.add(d.key);return [{jobId:row.id,key:d.key,title:d.markdown.split('\n').find(x=>x.trim()&&!/^\s*<!--/.test(x))?.replace(/^#+\s*/,"").slice(0,100)||"知识卡成品",createdAt:row.createdAt.toISOString(),kind:d.image?"图文成品":"正文备份",total:d.image?Number(d.params.notePageTotal)||0:0}];});
   const visible=await Promise.all(items.map(async item=>await deletionStore.read(deletionPath(userId,item.key))?null:item));
   const last=rows.slice(0,40).at(-1);return {items:visible.filter((item):item is typeof items[number]=>item!==null),nextCursor:rows.length>40&&last?{at:last.createdAt.toISOString(),id:last.id}:null};
 }

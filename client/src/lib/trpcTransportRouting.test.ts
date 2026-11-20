@@ -77,3 +77,8 @@ it("拉片整组路由直连长请求通道，相近前缀与其他路由不受�
   expect(useLongTrpcHttpLink({ path: "codeMotion.quote" })).toBe(true);
   expect(useLongTrpcHttpLink({ path: "auth.me" })).toBe(false);
 });
+
+it("手册成稿回填四个入口直连鉴权 Fly：大书成稿十几 MB，走反代会超时、按钮一直灰着", () => {
+  for (const path of ["mvAnalysis.getKnowledgeCardRecovery", "mvAnalysis.listKnowledgeCardRecovery", "mvAnalysis.getLastKnowledgeVerificationDraft", "mvAnalysis.resumeLastKnowledgeVerification"])
+    expect(useLongTrpcHttpLink({ path })).toBe(true);
+});
