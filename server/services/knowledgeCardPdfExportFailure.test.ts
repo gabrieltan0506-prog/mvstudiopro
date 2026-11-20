@@ -15,7 +15,6 @@ import nodePath from "node:path";
 import sharp from "sharp";
 import {
   buildKnowledgeCardPdfFile,
-  normalizeKnowledgeCardPage,
 } from "./knowledgeCardPdfExport";
 
 const page = async () =>
@@ -29,7 +28,8 @@ afterEach(() => {
 describe("PDF 生产端背压（终审 P2）", () => {
   it("sink 停滞：头先落盘、首页写完后停滞，页生产被挡住、缓冲有界、超时报错并清目录（终审第三条：真实测量替换恒真断言）", async () => {
     const jpeg = await page();
-    const norm = await normalizeKnowledgeCardPage(jpeg);
+    // 1121 起成品页原字节入版（不再归一重编码）：一页的体量 = 原图字节。
+    const norm = jpeg;
     // 放行 PDF 头 + 第一页的体量，之后停滞：既证明"能落盘的都落了"，又证明"落不动时生产停下"
     const stallAfter = norm.length + 16_384;
     let acked = 0;

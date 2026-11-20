@@ -35,7 +35,8 @@ export function KnowledgePublicationStageDetail({ stage, error, bar }: { stage: 
   const elapsed = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
   // 第 3 步（整册排版）按组计数：每组最多 4 章，各组并行。
   const layoutStep = progress.stepNumber === 3;
-  const count = progress.stepCount ? ` ${progress.stepDone}/${progress.stepCount}${layoutStep ? " 组" : ""}` : "";
+  const exportStep = progress.stepNumber === 4; // 第 4 步（版面审查与 PDF）按段计数：每章一段。
+  const count = progress.stepCount ? ` ${progress.stepDone}/${progress.stepCount}${layoutStep ? " 组" : exportStep ? " 段" : ""}` : "";
   const percentText = `${progress.estimated ? "约 " : ""}${progress.percent}%`;
   return (
     <div className="space-y-1" aria-label="排版阶段说明">

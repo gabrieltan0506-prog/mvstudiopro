@@ -90,7 +90,7 @@ export default function KnowledgePublicationPanel({
    */
   const runExport = async (documentId: string, expectedGeneration: string) => {
     try { sessionStorage.setItem(exportMarker(documentId), expectedGeneration); } catch { /* 仅影响刷新续看 */ }
-    let state: { status: string; taskId: string; result?: unknown; error?: string; retryable?: boolean } = await exportStarter.mutateAsync({ documentId, expectedGeneration });
+    let state: { status: string; taskId: string; result?: unknown; error?: string; retryable?: boolean; progress?: { done: number; total: number; label: string } } = await exportStarter.mutateAsync({ documentId, expectedGeneration });
     let reissued = 0, misses = 0;
     const deadline = Date.now() + 90 * 60_000;
     try {
@@ -105,6 +105,12 @@ export default function KnowledgePublicationPanel({
         await new Promise(resolve => setTimeout(resolve, 3000));
         try { state = await utils.client.editableLayout.exportPublicationStatus.query({ taskId: state.taskId }); misses = 0; }
         catch (error) { if (++misses > 5) throw error; }
+        // 1121：服务端带回分项进度时按实际段数走「版面审查与 PDF x/y 段」并说明当前在做什么；旧服务端不返回 progress，行为不变。
+        const progress = state.status === "running" ? state.progress : undefined;
+        if (progress && alive.current && latest.current.id === documentId) {
+          setStage(progress.total > 0 ? { step: 3, done: progress.done, total: progress.total } : { step: 3 });
+          if (progress.label) setMessage(`正在生成 PDF：${progress.label}…`);
+        }
       }
       if (state.status === "failed") throw Object.assign(Error(state.error || "PDF 暂未生成完成，请重新点击生成"), { retryable: state.retryable });
       return (state as { result: Awaited<ReturnType<typeof utils.client.editableLayout.exportPublication.mutate>> }).result;

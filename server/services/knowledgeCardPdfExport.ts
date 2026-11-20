@@ -1,7 +1,9 @@
 /**
  * 知识卡整套导出 PDF（0909 用户令：生成后可选单张下载或整套 PDF）。
  * - 只接受本桶 `generated/platform_knowledge_card/u{userId}/` 下、属于**当前用户**的成品图（签名 https 或 gs://）
- * - 全部页归一 3840×2160：比例不同的页等比缩放后按图边缘平均色补边，不裁不拉伸
+ * - 全部页统一 3840×2160：比例不同的页等比缩放后按图边缘平均色补边，不裁不拉伸
+ *   （2026-11-21 站长「不要牺牲像素」：缩放只在 PDF 版面层面做——原图字节原样入版（JPEG 原字节、PNG 无损），
+ *    不再经 sharp 缩放/JPEG q92 重编码；只有 pdfkit 不支持的格式（如 webp）才无损转 PNG。）
  * - pdfkit 拼页 → 落 GCS → 返回签名 https（媒体一律走 GCS URL，不回 base64）
  *
  * 0911 事故：23 页 4K 导出把进程打到 7.7 GB 被 OOM 杀掉，整站重启。两处根因：
@@ -74,13 +76,37 @@ export function resolveKnowledgeCardImageObjectName(url: string, bucket: string,
   return objectName;
 }
 
-/** 归一到统一页面尺寸；比例不同时用上下边缘平均色补边 */
+/**
+ * 成品页准备（1121）：返回原样入版的图（JPEG/PNG 原字节；其他格式无损转 PNG）与补边色。
+ * 页面上的等比缩放与居中由 pdfkit 的 fit 完成，内嵌像素 = 原图像素。
+ */
+export async function prepareKnowledgeCardPage(input: Buffer): Promise<{ image: Buffer; width: number; height: number; background: { r: number; g: number; b: number } | null }> {
+  const { width, height } = KNOWLEDGE_CARD_PDF_PAGE;
+  const meta = await sharp(input).metadata();
+  const w = meta.width || width;
+  const h = meta.height || height;
+  // EXIF 方向非默认的 JPEG：pdfkit 不按 EXIF 旋转，原字节入版会横倒；这类少见输入无损转 PNG（像素不变，只摆正）。
+  const passthrough = (meta.format === "jpeg" || meta.format === "png") && !(meta.orientation && meta.orientation > 1);
+  const image = passthrough ? input : await sharp(input).rotate().png().toBuffer();
+  const [iw, ih] = meta.orientation && meta.orientation >= 5 ? [h, w] : [w, h];
+  if (iw * height === ih * width) return { image, width: iw, height: ih, background: null };
+  const strip = Math.max(1, Math.min(12, Math.floor(ih / 40)));
+  const oriented = passthrough ? input : image;
+  const [top, bottom] = await Promise.all([
+    sharp(oriented).extract({ left: 0, top: 0, width: iw, height: strip }).stats(),
+    sharp(oriented).extract({ left: 0, top: ih - strip, width: iw, height: strip }).stats(),
+  ]);
+  const avg = (i: number) => Math.round((top.channels[i]!.mean + bottom.channels[i]!.mean) / 2);
+  return { image, width: iw, height: ih, background: { r: avg(0), g: avg(1), b: avg(2) } };
+}
+
+/** 旧接口（保留给既有调用/测试）：栅格化到统一页面尺寸。改为无损 PNG 输出，不再 JPEG 有损重编码。成品 PDF 已改用 prepareKnowledgeCardPage。 */
 export async function normalizeKnowledgeCardPage(input: Buffer): Promise<Buffer> {
   const { width, height } = KNOWLEDGE_CARD_PDF_PAGE;
   const meta = await sharp(input).metadata();
   const w = meta.width || width;
   const h = meta.height || height;
-  if (w === width && h === height) return sharp(input).jpeg({ quality: 92 }).toBuffer();
+  if (w === width && h === height) return sharp(input).png().toBuffer();
   const strip = Math.max(1, Math.min(12, Math.floor(h / 40)));
   const [top, bottom] = await Promise.all([
     sharp(input).extract({ left: 0, top: 0, width: w, height: strip }).stats(),
@@ -91,7 +117,7 @@ export async function normalizeKnowledgeCardPage(input: Buffer): Promise<Buffer>
   return sharp(input)
     .resize({ width, height, fit: "contain", background })
     .flatten({ background })
-    .jpeg({ quality: 92 })
+    .png()
     .toBuffer();
 }
 
@@ -177,11 +203,13 @@ export async function buildKnowledgeCardPdfFile(
       const current = pending!;
       pending = index + 1 < loadPage.length ? loadPage[index + 1]!() : undefined;
       pending?.catch(() => {});
-      const jpeg = await normalizeKnowledgeCardPage(await current);
+      const page = await prepareKnowledgeCardPage(await current);
       options.signal?.throwIfAborted();
       pipe.check();
       doc.addPage({ size: [width, height], margin: 0 });
-      doc.image(jpeg, 0, 0, { width, height });
+      // 比例不同：先铺边缘平均色，再把原图等比放进页面居中（只改显示尺寸，不改像素）。
+      if (page.background) doc.rect(0, 0, width, height).fill([page.background.r, page.background.g, page.background.b]);
+      doc.image(page.image, 0, 0, { fit: [width, height], align: "center", valign: "center" });
       await waitKnowledgeCardPdfPageDrained(readable, out, pipe, options);
       options.onPage?.(index + 1);
     }

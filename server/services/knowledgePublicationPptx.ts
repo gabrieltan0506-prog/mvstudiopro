@@ -17,7 +17,8 @@ import { exportKnowledgePublication, loadKnowledgePublicationExport } from './kn
 import { readKnowledgeImage } from './knowledgePublicationAdvisor';
 import { downloadGcsObjectVersioned, getGcsBucketName, signGsUriV4ReadUrl, uploadBufferToGcs } from './gcs';
 
-export const KNOWLEDGE_PPTX_VERSION='knowledge-pptx-1105-v3-outline-range';
+// v4（1121）：课件图改为原图原字节入版；成品目录随版本分开，旧课件不被当新成品复用、也不删除。
+export const KNOWLEDGE_PPTX_VERSION='knowledge-pptx-1121-v4-original-image';
 const WIDTH=13.333333;
 // 固定文本框也必须核对断行高度，防止合法短文本中的换行造成裁切。
 function fittedText(value:string,capacity:number,size:number,spacing:number,height:number):string{
@@ -95,9 +96,14 @@ export async function buildKnowledgePublicationPptx(doc:EditableLayout,review:Kn
   }else{
    const source=doc.pages.find(p=>p.id===item.imagePageId),data=source?.imageUrl?images[source.imageUrl]:'';
    if(!data)throw Error('课件提纲选用的原图缺失');
-   const raw=Buffer.from(data.split(',')[1],'base64');const resized=await sharp(raw).resize({width:1800,withoutEnlargement:true}).flatten({background:'#ffffff'}).jpeg({quality:90}).toBuffer();const meta=await sharp(resized).metadata();
-   const ratio=meta.width!/meta.height!,w=Math.min(5.8,4.35*ratio),h=w/ratio;
-   slide.addImage({data:'data:image/jpeg;base64,'+resized.toString('base64'),x:0.95+(5.8-w)/2,y:2.38+(4.35-h)/2,w,h});
+   // 1121 站长「不要牺牲像素」：课件里放原图字节（JPEG/PNG 原样；webp 上游已无损转 PNG），只在幻灯片上按比例缩放显示尺寸，
+   // 不再缩到 1800 宽、不再 JPEG q90 重编码。EXIF 方向非默认时无损转 PNG 摆正（像素不变）。
+   const raw=Buffer.from(data.split(',')[1],'base64');const meta=await sharp(raw).metadata();
+   const rotated=!!(meta.orientation&&meta.orientation>1),embedded=rotated?await sharp(raw).rotate().png().toBuffer():raw;
+   const mime=rotated?'image/png':data.slice(5,data.indexOf(';'));
+   const [iw,ih]=meta.orientation&&meta.orientation>=5?[meta.height!,meta.width!]:[meta.width!,meta.height!];
+   const ratio=iw/ih,w=Math.min(5.8,4.35*ratio),h=w/ratio;
+   slide.addImage({data:`data:${mime};base64,`+embedded.toString('base64'),x:0.95+(5.8-w)/2,y:2.38+(4.35-h)/2,w,h});
    points(item.points,7.1,5.15,16,20);
   }
  }
