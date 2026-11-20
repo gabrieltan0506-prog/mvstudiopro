@@ -129,7 +129,7 @@ it("真实顾问路由产出方案，经永久回执与保存校验后控制合�
   // 配图只以地址引用：阅读稿与送排版服务的 HTML 都不得出现内嵌图片数据。
   expect(savedHtml).not.toContain('base64,');expect(savedHtml).toContain('https://example.invalid/signed/');
   expect(f.deps.pdf.mock.calls.map(([html])=>html).join('\n')).not.toContain('base64,');
-  expect(Array.from(f.objects.keys()).filter(name=>name.endsWith('/阅读稿.html')).every(name=>name.includes('-orig1/'))).toBe(true);
+  expect(Array.from(f.objects.keys()).filter(name=>name.endsWith('/阅读稿.html')).every(name=>name.includes('-full-q95/'))).toBe(true);
   const sentHtml=f.deps.pdf.mock.calls.map(([html])=>html).join('\n');
   for(const end of ["末句一必须保留","末句二必须保留","末句三必须保留","末句四必须保留"])expect(sentHtml).toContain(end);
   // 逐页 PDF 已停写（站长 1120 定）：整册 PDF 与页数不变，分片照存，不再产出 <分片>.pdf.pages/。

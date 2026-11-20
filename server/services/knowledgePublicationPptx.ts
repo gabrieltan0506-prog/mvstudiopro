@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 // 使用该库明确提供的Node入口，避免tsx与生产ESM的默认导出互操作差异。
 const PptxConstructor = createRequire(import.meta.url)('pptxgenjs') as typeof PptxGenJS;
 import sharp from 'sharp';
+import {KNOWLEDGE_EXPORT_DEFAULT_JPEG_QUALITY,knowledgeExportJpegQuality} from '../../shared/knowledgeExportCapacity';
 import { createHash } from 'node:crypto';
 import type JSZip from 'jszip';
 const Zip = createRequire(import.meta.url)('jszip') as typeof JSZip;
@@ -17,8 +18,8 @@ import { exportKnowledgePublication, loadKnowledgePublicationExport } from './kn
 import { readKnowledgeImage } from './knowledgePublicationAdvisor';
 import { downloadGcsObjectVersioned, getGcsBucketName, signGsUriV4ReadUrl, uploadBufferToGcs } from './gcs';
 
-// v4（1121）：课件图改为原图原字节入版；成品目录随版本分开，旧课件不被当新成品复用、也不删除。
-export const KNOWLEDGE_PPTX_VERSION='knowledge-pptx-1121-v4-original-image';
+// v5（1121 站长定）：课件图为原像素 JPEG（质量档按容量定，默认 95，课件文件 ≤280MB），目录再按质量档分开；旧 v3/v4 课件不被复用、也不删除。
+export const KNOWLEDGE_PPTX_VERSION='knowledge-pptx-1121-v5-full-jpeg';
 const WIDTH=13.333333;
 // 固定文本框也必须核对断行高度，防止合法短文本中的换行造成裁切。
 function fittedText(value:string,capacity:number,size:number,spacing:number,height:number):string{
@@ -26,7 +27,7 @@ function fittedText(value:string,capacity:number,size:number,spacing:number,heig
  if(content.length*size/72*spacing+0.04>height)throw Error('顾问单页内容超出可读版面，请精简该页提纲；未自动续页或缩字');
  return content.join('\n');
 }
-export async function buildKnowledgePublicationPptx(doc:EditableLayout,review:KnowledgeReview,images:Record<string,string>,value:KnowledgePresentationPlan){
+export async function buildKnowledgePublicationPptx(doc:EditableLayout,review:KnowledgeReview,images:Record<string,string>,value:KnowledgePresentationPlan,options:{imageQuality?:number}={}){
  const plan=knowledgePresentationPlanSchema.parse(value);
  assertKnowledgePresentationCapacity(plan);
  const deck=new PptxConstructor();deck.layout='LAYOUT_WIDE';deck.author='图文知识手册';deck.subject=doc.title;deck.title=plan.title;
@@ -96,11 +97,12 @@ export async function buildKnowledgePublicationPptx(doc:EditableLayout,review:Kn
   }else{
    const source=doc.pages.find(p=>p.id===item.imagePageId),data=source?.imageUrl?images[source.imageUrl]:'';
    if(!data)throw Error('课件提纲选用的原图缺失');
-   // 1121 站长「不要牺牲像素」：课件里放原图字节（JPEG/PNG 原样；webp 上游已无损转 PNG），只在幻灯片上按比例缩放显示尺寸，
-   // 不再缩到 1800 宽、不再 JPEG q90 重编码。EXIF 方向非默认时无损转 PNG 摆正（像素不变）。
+   // 1121 站长定：课件图「原像素 + 高品质 JPEG」：不缩放（只在幻灯片上按比例缩放显示尺寸），非 JPEG 原图按容量选定的质量档
+   // （默认 95，mozjpeg、4:4:4）编码；原图已是 JPEG 且方向正常时原字节放入，不重编码。
    const raw=Buffer.from(data.split(',')[1],'base64');const meta=await sharp(raw).metadata();
-   const rotated=!!(meta.orientation&&meta.orientation>1),embedded=rotated?await sharp(raw).rotate().png().toBuffer():raw;
-   const mime=rotated?'image/png':data.slice(5,data.indexOf(';'));
+   const rotated=!!(meta.orientation&&meta.orientation>1),passthrough=meta.format==='jpeg'&&!rotated;
+   const embedded=passthrough?raw:await sharp(raw).rotate().jpeg({quality:options.imageQuality??KNOWLEDGE_EXPORT_DEFAULT_JPEG_QUALITY,mozjpeg:true,chromaSubsampling:'4:4:4'}).toBuffer();
+   const mime='image/jpeg';
    const [iw,ih]=meta.orientation&&meta.orientation>=5?[meta.height!,meta.width!]:[meta.width!,meta.height!];
    const ratio=iw/ih,w=Math.min(5.8,4.35*ratio),h=w/ratio;
    slide.addImage({data:`data:${mime};base64,`+embedded.toString('base64'),x:0.95+(5.8-w)/2,y:2.38+(4.35-h)/2,w,h});
@@ -138,19 +140,22 @@ export async function exportKnowledgePublicationPptx(owner:number,documentId:str
  }
  const plan=await deps.plan(owner,doc);
  const planDigest=createHash("sha256").update(JSON.stringify(plan)).digest("hex");
- const folder=`${prefix}/${KNOWLEDGE_PPTX_VERSION}/${planDigest}`;
+ const base=`${prefix}/${KNOWLEDGE_PPTX_VERSION}/${planDigest}`;
  const run=async()=>{
-  const saved=await deps.read(`${folder}/manifest.json`);
-  if(saved){const value=JSON.parse(saved.toString('utf8'));if(value.pptxBytes>0&&value.slides>0)return {...value,pptxUrl:deps.sign(`${folder}/课件.pptx`)};}
+  // 画质档由用户在稿件上选定（缺省 0.95）；不同档的课件分目录存放。
+  const chosen=knowledgeExportJpegQuality(doc.publication?.exportOptions?.imageQuality),folder=`${base}/q${chosen}`;
+  {const saved=await deps.read(`${folder}/manifest.json`);
+   if(saved){const value=JSON.parse(saved.toString('utf8'));if(value.pptxBytes>0&&value.slides>0)return {...value,pptxUrl:deps.sign(`${folder}/课件.pptx`)};}}
   const expected=new Map(receipt.sourceImages.map(i=>[i.uri,i.sha256]));const images:Record<string,string>={};let bytes=0;
   const selectedImages=new Set(plan.slides.flatMap(s=>s.type==="image"?[s.imagePageId]:[]));
   for(const p of doc.pages){if(!selectedImages.has(p.id)||!p.imageUrl||images[p.imageUrl])continue;const image=await deps.image(p.imageUrl);if(expected.get(p.imageUrl)!==image.sha256)throw new Error('原图已变化，未导出旧版课件');bytes+=image.buffer.length;if(bytes>512*1024*1024)throw new Error('课件原图超过512MiB，未截断导出');const normalized=image.mimeType==='image/webp'?await sharp(image.buffer).png().toBuffer():image.buffer;images[p.imageUrl]=`data:${image.mimeType==='image/webp'?'image/png':image.mimeType};base64,${normalized.toString('base64')}`;}
-  const result=await deps.build(doc,review,images,plan);
+  // 原像素、按所选画质编码；体积不设拦截（站长：超出就超出，不报错）。
+  const result=await deps.build(doc,review,images,plan,{imageQuality:chosen});
   if(result.buffer.subarray(0,2).toString()!=='PK'||result.slides!==plan.slides.length)throw new Error('未生成有效PPTX');
   await deps.save(`${folder}/课件.pptx`,result.buffer,'application/vnd.openxmlformats-officedocument.presentationml.presentation');
-  const meta={pptxBytes:result.buffer.length,slides:result.slides};await deps.save(`${folder}/manifest.json`,Buffer.from(JSON.stringify(meta)),'application/json');
+  const meta={pptxBytes:result.buffer.length,slides:result.slides,imageQuality:chosen};await deps.save(`${folder}/manifest.json`,Buffer.from(JSON.stringify(meta)),'application/json');
   return {...meta,pptxUrl:deps.sign(`${folder}/课件.pptx`)};
  };
- if(active.has(folder))return active.get(folder)!;
- const task=run().finally(()=>active.delete(folder));active.set(folder,task);return task;
+ if(active.has(base))return active.get(base)!;
+ const task=run().finally(()=>active.delete(base));active.set(base,task);return task;
 }

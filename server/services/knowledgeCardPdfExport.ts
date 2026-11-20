@@ -2,8 +2,8 @@
  * 知识卡整套导出 PDF（0909 用户令：生成后可选单张下载或整套 PDF）。
  * - 只接受本桶 `generated/platform_knowledge_card/u{userId}/` 下、属于**当前用户**的成品图（签名 https 或 gs://）
  * - 全部页统一 3840×2160：比例不同的页等比缩放后按图边缘平均色补边，不裁不拉伸
- *   （2026-11-21 站长「不要牺牲像素」：缩放只在 PDF 版面层面做——原图字节原样入版（JPEG 原字节、PNG 无损），
- *    不再经 sharp 缩放/JPEG q92 重编码；只有 pdfkit 不支持的格式（如 webp）才无损转 PNG。）
+ *   （2026-11-21 站长定「原像素 + 高品质 JPEG 95，最多 280MB」：缩放只在 PDF 版面层面做，图像数据保持原像素；
+ *    非 JPEG 原图按容量估算选定的质量档（默认 95，mozjpeg、4:4:4）编码，JPEG 原图原字节入版；整份 PDF 超 280MB 逐档下调，最低档仍超报错。）
  * - pdfkit 拼页 → 落 GCS → 返回签名 https（媒体一律走 GCS URL，不回 base64）
  *
  * 0911 事故：23 页 4K 导出把进程打到 7.7 GB 被 OOM 杀掉，整站重启。两处根因：
@@ -24,6 +24,7 @@ import sharp from "sharp";
 // sharp/libvips 的内存约束统一在 sharpLimits（这里 import 保证独立加载本模块时也生效，
  // 且不覆盖 SHARP_CONCURRENCY 旋钮）
 import "../_core/sharpLimits.js";
+import { KNOWLEDGE_EXPORT_DEFAULT_JPEG_QUALITY } from "../../shared/knowledgeExportCapacity";
 
 export const KNOWLEDGE_CARD_PDF_PAGE = { width: 3840, height: 2160 } as const;
 const KNOWLEDGE_CARD_IMAGE_PREFIX = "generated/platform_knowledge_card/";
@@ -77,21 +78,21 @@ export function resolveKnowledgeCardImageObjectName(url: string, bucket: string,
 }
 
 /**
- * 成品页准备（1121）：返回原样入版的图（JPEG/PNG 原字节；其他格式无损转 PNG）与补边色。
+ * 成品页准备（1121）：返回入版的图（JPEG 原图原字节；其余按 quality 编成原像素 JPEG，只按 EXIF 摆正）与补边色。
  * 页面上的等比缩放与居中由 pdfkit 的 fit 完成，内嵌像素 = 原图像素。
  */
-export async function prepareKnowledgeCardPage(input: Buffer): Promise<{ image: Buffer; width: number; height: number; background: { r: number; g: number; b: number } | null }> {
+export async function prepareKnowledgeCardPage(input: Buffer, quality: number = KNOWLEDGE_EXPORT_DEFAULT_JPEG_QUALITY): Promise<{ image: Buffer; width: number; height: number; background: { r: number; g: number; b: number } | null }> {
   const { width, height } = KNOWLEDGE_CARD_PDF_PAGE;
   const meta = await sharp(input).metadata();
   const w = meta.width || width;
   const h = meta.height || height;
   // EXIF 方向非默认的 JPEG：pdfkit 不按 EXIF 旋转，原字节入版会横倒；这类少见输入无损转 PNG（像素不变，只摆正）。
-  const passthrough = (meta.format === "jpeg" || meta.format === "png") && !(meta.orientation && meta.orientation > 1);
-  const image = passthrough ? input : await sharp(input).rotate().png().toBuffer();
+  const passthrough = meta.format === "jpeg" && !(meta.orientation && meta.orientation > 1);
+  const image = passthrough ? input : await sharp(input).rotate().jpeg({ quality, mozjpeg: true, chromaSubsampling: "4:4:4" }).toBuffer();
   const [iw, ih] = meta.orientation && meta.orientation >= 5 ? [h, w] : [w, h];
   if (iw * height === ih * width) return { image, width: iw, height: ih, background: null };
   const strip = Math.max(1, Math.min(12, Math.floor(ih / 40)));
-  const oriented = passthrough ? input : image;
+  const oriented = passthrough ? input : await sharp(input).rotate().toBuffer();
   const [top, bottom] = await Promise.all([
     sharp(oriented).extract({ left: 0, top: 0, width: iw, height: strip }).stats(),
     sharp(oriented).extract({ left: 0, top: ih - strip, width: iw, height: strip }).stats(),
@@ -178,7 +179,7 @@ export async function waitKnowledgeCardPdfPageDrained(
  */
 export async function buildKnowledgeCardPdfFile(
   loadPage: Array<() => Promise<Buffer>>,
-  options: { timeoutMs?: number; signal?: AbortSignal; makeOut?: (filePath: string) => Writable; onPage?: (done: number) => void } = {},
+  options: { timeoutMs?: number; signal?: AbortSignal; makeOut?: (filePath: string) => Writable; onPage?: (done: number) => void; imageQuality?: number } = {},
 ): Promise<{ filePath: string; dir: string; bytes: number }> {
   if (!loadPage.length) throw new Error("没有可导出的页面");
   const { width, height } = KNOWLEDGE_CARD_PDF_PAGE;
@@ -203,7 +204,7 @@ export async function buildKnowledgeCardPdfFile(
       const current = pending!;
       pending = index + 1 < loadPage.length ? loadPage[index + 1]!() : undefined;
       pending?.catch(() => {});
-      const page = await prepareKnowledgeCardPage(await current);
+      const page = await prepareKnowledgeCardPage(await current, options.imageQuality);
       options.signal?.throwIfAborted();
       pipe.check();
       doc.addPage({ size: [width, height], margin: 0 });
@@ -264,7 +265,9 @@ export async function exportKnowledgeCardPdfToGcs(params: {
     if (!res.ok) throw new Error(`读取成品图失败（${res.status}）`);
     return Buffer.from(await res.arrayBuffer());
   });
-  const { filePath, dir, bytes } = await buildKnowledgeCardPdfFile(loaders, { onPage: params.onPage });
+  // 原像素、默认画质 0.95；体积不设拦截（站长：超出就超出，不报错）。
+  const built = await buildKnowledgeCardPdfFile(loaders, { onPage: params.onPage, imageQuality: KNOWLEDGE_EXPORT_DEFAULT_JPEG_QUALITY });
+  const { filePath, dir, bytes } = built;
   // 终审 P2：调用方持有 Node 流的所有权——上传前置失败时 fd 不能靠 GC，
   // finally 里 destroy 并等它真正关闭，之后才删临时目录
   const source = createReadStream(filePath);
