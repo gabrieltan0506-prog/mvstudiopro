@@ -79,6 +79,7 @@ it("拉片整组路由直连长请求通道，相近前缀与其他路由不受�
 });
 
 it("手册成稿回填四个入口直连鉴权 Fly：大书成稿十几 MB，走反代会超时、按钮一直灰着", () => {
-  for (const path of ["mvAnalysis.getKnowledgeCardRecovery", "mvAnalysis.listKnowledgeCardRecovery", "mvAnalysis.getLastKnowledgeVerificationDraft", "mvAnalysis.resumeLastKnowledgeVerification"])
+  for (const path of ["mvAnalysis.getKnowledgeCardRecovery", "mvAnalysis.listKnowledgeCardRecovery", "mvAnalysis.getLastKnowledgeVerificationDraft", "mvAnalysis.resumeLastKnowledgeVerification",
+    "mvAnalysis.startKnowledgeCardPdfExport", "mvAnalysis.knowledgeCardPdfExportStatus", "mvAnalysis.deleteKnowledgeCardRecovery", "mvAnalysis.deleteKnowledgeCardEpubPdf", "mvAnalysis.inspectAdvisorKnowledge", "mvAnalysis.refreshAdvisorKnowledge"])
     expect(useLongTrpcHttpLink({ path })).toBe(true);
 });

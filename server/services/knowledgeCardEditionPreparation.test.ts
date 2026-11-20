@@ -170,10 +170,10 @@ it('恢复缓存用当前分页器刷新图片计数但保留文字实测与原�
  const invoke=vi.fn(),save=vi.fn();
  const result=await prepareKnowledgeCardEditions({sourceMarkdown,invoke,evidence:{prefix:'counts',read:async()=>prior,save}});
  expect(result.editionPageCounts).toMatchObject({full:{imagePages:1,readingPages:10},concise:{imagePages:1,readingPages:47}});
- // 生图前预检：完整版图文同页、不排独立内文页（预算页数=图数），精华版仍为图:文1:2–1:3。
- expect(result.editionPageCounts!.full.pageBudget!.budget.textPages).toEqual({min:0,target:0,max:0});
- expect(result.editionPageCounts!.full.pageBudget!.budget.totalPages).toEqual({min:1,target:1,max:1});
- expect(result.editionPageCounts!.concise.pageBudget!.budget.textPages).toEqual({min:2,target:3,max:3});
+ // 生图前预检（只展示，站长 2026-11-20 口径）：两档总页数 ≤80；完整版文字续页 ≤30 页，精华版 ≤50 页（均不超过 80−图数）。
+ expect(result.editionPageCounts!.full.pageBudget!.budget.textPages).toEqual({min:0,target:30,max:30});
+ expect(result.editionPageCounts!.full.pageBudget!.budget.totalPages).toEqual({min:1,target:31,max:31});
+ expect(result.editionPageCounts!.concise.pageBudget!.budget.textPages).toEqual({min:0,target:50,max:50});
  expect(prior.result.editionPageCounts.full.imagePages).toBe(99);expect(invoke).not.toHaveBeenCalled();expect(save).not.toHaveBeenCalled();
 });
 

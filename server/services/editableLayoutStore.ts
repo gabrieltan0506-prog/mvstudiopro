@@ -1,4 +1,5 @@
 import { validateKnowledgeImageReplacements } from "./knowledgePublicationImages";
+import { knowledgeReadingBudgetVersionTransitionError } from "../../shared/knowledgePublication";
 import {
   layoutLibrarySchema,
   type LayoutLibrary,
@@ -178,6 +179,9 @@ export async function writeLayoutLibrary(
         await validateKnowledgePresentationRetryTransition(owner,old,doc);
       }
       if (old.publication && doc.publication) {
+        // 审校预算版本只能在尚未开始审校时写入，写入后不改不删（已发请求与回执沿用当时的预算）。
+        const budgetError = knowledgeReadingBudgetVersionTransitionError(old.publication, doc.publication);
+        if (budgetError) throw new Error(budgetError);
         const oldParallel = old.publication.parallel, parallel = doc.publication.parallel;
         if (oldParallel && (!parallel || oldParallel.completed.some(i => !parallel.completed.includes(i)) ||
             Object.entries(oldParallel.channels).some(([i, channel]) => parallel.channels[i] !== channel)))

@@ -12,6 +12,13 @@ const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   "mvAnalysis.listKnowledgeCardRecovery",
   "mvAnalysis.getLastKnowledgeVerificationDraft",
   "mvAnalysis.resumeLastKnowledgeVerification",
+  /** 1120：手册其余入口一律直连，不再经反代（导出启动与状态轮询、备份与转档删除、顾问资料查看与刷新）。 */
+  "mvAnalysis.startKnowledgeCardPdfExport",
+  "mvAnalysis.knowledgeCardPdfExportStatus",
+  "mvAnalysis.deleteKnowledgeCardRecovery",
+  "mvAnalysis.deleteKnowledgeCardEpubPdf",
+  "mvAnalysis.inspectAdvisorKnowledge",
+  "mvAnalysis.refreshAdvisorKnowledge",
   "mvAnalysis.enqueueKnowledgeCardLevelDerive",
   "mvAnalysis.getGrowthSnapshot",
   "mvAnalysis.getPlatformDashboard",
