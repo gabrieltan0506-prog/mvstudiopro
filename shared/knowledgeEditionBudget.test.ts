@@ -12,46 +12,44 @@ describe("图文比例页数预算（用户2026-11-08确认；2026-11-09 完整�
     expect(knowledgeEditionPageBudget("full", 48).totalPages).toEqual({ min: 48, target: 48, max: 48 });
     expect(knowledgeEditionPageBudget("full", 0).totalPages.max).toBe(0);
   });
-  it("1108g2 敦煌复盘：16张图、6.8万字图外细节不得再排成内文页；预检给出压缩目标字数、比例与不压缩所需图数", () => {
+  // 2026-11-20 站长 23:20 口径：准备阶段预检（只展示、不参与请求身份）改按新预算——总页数 ≤80，完整版文字续页约 30 页。
+  it("1108g2 敦煌：16 张图、6.8 万字图外细节 → 文字续页 30 页、合计 46 页（≤80），报出需提炼到的字数与比例", () => {
     const dunhuang = knowledgeEditionBudgetCheck("full", 16, 68077, 15551);
-    expect(dunhuang.plannedTextPages).toBe(0);
-    expect(dunhuang.plannedTotalPages).toBe(16);
+    expect(dunhuang.plannedTextPages).toBe(30);
+    expect(dunhuang.plannedTotalPages).toBe(46);
     expect(dunhuang.compression).toEqual({
-      readingCapacityChars: 11200, targetReadingChars: 11200, excessChars: 56877,
-      ratio: 11200 / 68077, imagesForNoLoss: Math.ceil((68077 + 15551) / 1900), imageCap: 48,
+      readingCapacityChars: 50200, targetReadingChars: 50200, excessChars: 17877,
+      ratio: 50200 / 68077, imagesForNoLoss: 45, imageCap: 48,
     });
-    expect(dunhuang.compression!.imagesForNoLoss).toBe(45);
     const text = dunhuang.warnings.join("");
-    expect(text).toContain("不排独立内文页");
-    expect(text).toContain("压缩至约11200字（约16%");
-    // 1109 档位上限改完整版 48：敦煌 45 张不超上限，改为给出改图数方案（需用户拍板）而不是只能压缩。
-    expect(text).toContain("或改为45张图（≤上限48张）可不丢内容，需用户拍板，不自行加图");
-    const beyond = knowledgeEditionBudgetCheck("full", 16, 100000, 15551);
-    expect(beyond.compression!.imagesForNoLoss).toBeGreaterThan(48);
-    expect(beyond.warnings.join("")).toContain("超过完整版上限48张，只能压缩");
+    expect(text).toContain("全册最多80页");
+    expect(text).toContain("提炼到约50200字（约原来的74%）");
+    expect(text).toContain("不是截断");
+    expect(knowledgeEditionBudgetCheck("full", 16, 300000, 15551).warnings.join("")).toContain("超过完整版上限48张，只能提炼");
   });
-  it("完整版内文装得进图下栏时无压缩提示；略超但加图可容时给出改图数方案而不自行加图", () => {
+  it("完整版内文装得进（图下栏 + 续页）时无提炼提示，文字续页按资料实需", () => {
     const fit = knowledgeEditionBudgetCheck("full", 16, 11000, 15000);
     expect(fit.compression).toBeNull();
     expect(fit.warnings).toEqual([]);
     expect(fit.plannedTotalPages).toBe(16);
-    const slight = knowledgeEditionBudgetCheck("full", 10, 8000, 12000);
-    expect(slight.compression!.imagesForNoLoss).toBe(11);
-    expect(slight.warnings.join("")).toContain("或改为11张图（≤上限48张）可不丢内容，需用户拍板，不自行加图");
-    expect(slight.plannedTotalPages).toBe(10);
+    const some = knowledgeEditionBudgetCheck("full", 10, 20000, 12000);
+    expect(some.compression).toBeNull();
+    expect(some.plannedTextPages).toBe(Math.ceil((20000 - 7000) / 1300));
   });
   it("精华版图:内文1:2–1:3", () => {
     expect(knowledgeEditionPageBudget("concise", 8).textPages).toEqual({ min: 16, target: 20, max: 24 });
   });
-  it("生图前预检只提示不阻断：资料不足/过多给出说明", () => {
+  it("生图前预检只提示不阻断：资料少据实、资料多报提炼；两档总页数 ≤80", () => {
     const thin = knowledgeEditionBudgetCheck("concise", 8, 3000);
-    expect(thin.warnings.join("")).toContain("不硬凑篇幅");
-    expect(thin.plannedTextPages).toBe(16);
-    const heavy = knowledgeEditionBudgetCheck("full", 16, 200000);
-    expect(heavy.plannedTextPages).toBe(0);
-    expect(heavy.plannedTotalPages).toBe(16);
-    expect(heavy.warnings.join("")).toContain("合并去重");
-    expect(knowledgeEditionBudgetCheck("concise", 8, 76000).warnings.join("")).toContain("不重复图中内容");
+    expect(thin.warnings).toEqual([]);
+    expect(thin.plannedTextPages).toBe(0);
+    const heavy = knowledgeEditionBudgetCheck("full", 48, 1_600_000);
+    expect(heavy.plannedTextPages).toBe(30);
+    expect(heavy.plannedTotalPages).toBe(78);
+    expect(heavy.warnings.join("")).toContain("约原来的4.5%");
+    const concise = knowledgeEditionBudgetCheck("concise", 30, 1_600_000);
+    expect(concise.plannedTotalPages).toBe(80);
+    expect(concise.warnings.join("")).toContain("不重复图中内容");
   });
   it("完整版每章只有图下一栏预算（≤700 字），不分配任何续页；精华版按图外资料多少分配整页", () => {
     const pages = Array.from({ length: 16 }, (_, i) => ({ id: `p${i}`, headline: `章${i}`, body: "图中文字".repeat(250), imageJobId: `job-${i}`, supplement: i % 4 === 0 ? "图外资料".repeat(1500) : "" }));
@@ -89,12 +87,10 @@ describe("完整版膨胀稿端到端：排版源页数 = 图数，无独立内�
     const budgets = knowledgeReadingCharBudgets("full", pages.map((p, i) => ({ id: `p${i}`, headline: p.headline, body: p.body, supplement: p.supplement, role: "illustration" as const })));
     expect(budgets.budget.totalPages).toEqual({ min: n, target: n, max: n });
     expect(budgets.pages.every(p => p.readingPages === 0 && p.maxChars === KNOWLEDGE_LEAD_PAGE_CHARS)).toBe(true);
+    // 预检（只展示）按新口径：40 图 + 30 页续页 = 70 页 ≤80。
     const check = knowledgeEditionBudgetCheck("full", n, plan.readingChars, knowledgeEditionImageChars(plan));
-    expect(check.plannedTotalPages).toBe(n);
-    expect(check.compression!.targetReadingChars).toBe(n * KNOWLEDGE_LEAD_PAGE_CHARS);
-    expect(check.compression!.excessChars).toBe(plan.readingChars - n * KNOWLEDGE_LEAD_PAGE_CHARS);
-    expect(check.compression!.imagesForNoLoss).toBeGreaterThan(n);
-    expect(check.warnings.join("")).toContain("只能压缩");
+    expect(check.plannedTotalPages).toBe(n + Math.min(30, Math.ceil((plan.readingChars - n * KNOWLEDGE_LEAD_PAGE_CHARS) / KNOWLEDGE_READING_PAGE_CHARS)));
+    expect(check.plannedTotalPages).toBeLessThanOrEqual(80);
   });
 });
 

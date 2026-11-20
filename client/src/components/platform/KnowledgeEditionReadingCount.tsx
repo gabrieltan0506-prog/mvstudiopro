@@ -10,7 +10,7 @@ export const KnowledgeEditionReadingCount = memo(function KnowledgeEditionReadin
  if(!plan)return <span aria-live="polite">文字说明 正在核算…</span>;
  const {budget}=plan;
  return <span aria-live="polite">
-  图文同页 {budget.imagePages} 页{budget.level==='concise'?<> · 内文约 {plan.plannedTextPages} 页（建议 {budget.textPages.min}–{budget.textPages.max} 页）</>:' · 不排独立内文页'} · 合计约 {plan.plannedTotalPages} 页
+  图文同页 {budget.imagePages} 页 · 文字续页约 {plan.plannedTextPages} 页（上限 {budget.textPages.max} 页） · 合计约 {plan.plannedTotalPages} 页（最多 {budget.totalPages.max} 页）
   {plan.warnings.map(w=><span key={w} className="block text-amber-700">{w}</span>)}
   {plan.titleWarning&&<span className="block text-amber-700">{plan.titleWarning}</span>}
  </span>;

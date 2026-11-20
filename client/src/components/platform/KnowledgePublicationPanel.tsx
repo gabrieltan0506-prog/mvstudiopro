@@ -19,7 +19,9 @@ import {
   knowledgeManuscript,
   parseKnowledgeManuscript,
   KNOWLEDGE_PUBLICATION_QUESTION,
+  knowledgeReviewNotStarted,
 } from "@shared/knowledgePublication";
+import { KNOWLEDGE_READING_BUDGET_VERSION } from "@shared/knowledgeEditionBudget";
 import {
   knowledgePublicationHead,
   knowledgePublicationChapter,
@@ -312,7 +314,10 @@ export default function KnowledgePublicationPanel({
       }
       if (!pub.parallel) {
         // 新开并发审校的稿：模型序 GLM FlashX 优先（用户规则 2026-11-09）；旧稿不补写，保持旧请求身份。
-        pub = { ...pub, parallel: { channels: {}, completed: Array.from(completedKnowledgeBatches(pub, batches.length)), family: "glm" } };
+        // 尚无任何审校结果的稿在此首次开始审校时写入新篇幅预算（总页数 ≤80、文字续页约 30 页，站长 2026-11-20）；
+        // 部署前已建好 source、尚未开始审校的稿也在这里拿到新预算。已开始审校的稿不写，沿用旧预算。
+        const budgetVersion = knowledgeReviewNotStarted(pub) && pub.source.readingContract ? { readingBudgetVersion: KNOWLEDGE_READING_BUDGET_VERSION } : {};
+        pub = { ...pub, ...budgetVersion, parallel: { channels: {}, completed: Array.from(completedKnowledgeBatches(pub, batches.length)), family: "glm" } };
         next = { ...next, publication: pub };
       }
       try { await save(next); }

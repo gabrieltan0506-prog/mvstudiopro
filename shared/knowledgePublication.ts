@@ -115,6 +115,11 @@ export const knowledgePublicationSchema = z
     infographicTemplateId: z.string().max(100).optional(),
     layoutConversationId: z.string().uuid().optional(),
     designMode: z.enum(["content"]).optional(),
+    /**
+     * 审校预算版本（站长 2026-11-20：总页数 ≤80、文字续页约 30 页）。只在首次开始审校（尚无并发分配、无章节审校结果）时写入，
+     * 之后各批沿用；不在 source 里，原稿摘要与出图身份不变。无此字段 = 旧预算，审校请求与摘要逐字不变。
+     */
+    readingBudgetVersion: z.literal(2).optional(),
     source: knowledgeSourceSchema,
     review: knowledgeReviewSchema.optional(),
     chapterReviewDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
@@ -296,3 +301,18 @@ export const knowledgeConsistencySchema = z.object({
     message: z.string().trim().min(1).max(2000),
   }).strict()),
 }).strict();
+
+/** 尚未开始审校：没有并发分配、没有已完成批次、没有章节审校结果与整册审校。只有这样的稿才可写入新预算版本。 */
+export function knowledgeReviewNotStarted(publication: Pick<KnowledgePublication, "parallel" | "completedBatches" | "chapterReviews" | "review">) {
+  return !publication.parallel && !publication.completedBatches && !Object.keys(publication.chapterReviews || {}).length && !publication.review;
+}
+/**
+ * 预算版本只能在「尚未开始审校」时由无变有；一经写入不得改动或删除（已按某一预算发出的请求与回执沿用该预算）。
+ * 返回错误文字，合规返回 null。
+ */
+export function knowledgeReadingBudgetVersionTransitionError(old: KnowledgePublication | undefined, next: KnowledgePublication | undefined) {
+  if (!old || !next || old.readingBudgetVersion === next.readingBudgetVersion) return null;
+  if (old.readingBudgetVersion !== undefined) return "审校预算版本已确定，不能改动或删除";
+  if (!knowledgeReviewNotStarted(old)) return "已开始审校的稿件沿用原篇幅预算，不能改为新预算";
+  return null;
+}

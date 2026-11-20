@@ -9,7 +9,7 @@
  * - density（图内文字量，source.pages[i].body）照旧报出，供排查与报告；不再用于分配。
  * - 精华版与无档位旧稿本来就只排图文同页，不变。
  */
-import { KNOWLEDGE_FULL_MAX_TOTAL_PAGES, KNOWLEDGE_LEAD_PAGE_CHARS, type KnowledgeEditionLevel } from "./knowledgeEditionBudget";
+import { KNOWLEDGE_EDITION_MAX_TOTAL_PAGES_V2, KNOWLEDGE_FULL_MAX_TOTAL_PAGES, KNOWLEDGE_LEAD_PAGE_CHARS, KNOWLEDGE_READING_BUDGET_VERSION, knowledgeTextPageBudgetV2, type KnowledgeEditionLevel, type KnowledgeReadingBudgetVersion } from "./knowledgeEditionBudget";
 
 /**
  * @deprecated 2026-11-13 取消跨页后不再用于任何预算；仅为旧回执与旧调用方保留导出。
@@ -34,8 +34,13 @@ export type KnowledgeHandbookPagePlan = {
 const visible = (s: string) => s.replace(/\s+/g, "").length;
 
 /** 完整版目标页数区间：配图数 × 1.41～1.59，上限再受 72 页硬顶约束；目标取区间中点（为个别续页留余量）。 */
-export function knowledgeFullPageRange(images: number) {
+export function knowledgeFullPageRange(images: number, budgetVersion?: KnowledgeReadingBudgetVersion) {
   if (!Number.isSafeInteger(images) || images < 1) return null;
+  // 新预算（站长 2026-11-20）：图文同页 + 约 30 页文字续页，总页数 ≤80；与审校请求里的续页预算同一口径。
+  if (budgetVersion === KNOWLEDGE_READING_BUDGET_VERSION) {
+    const max = Math.min(KNOWLEDGE_EDITION_MAX_TOTAL_PAGES_V2, images + knowledgeTextPageBudgetV2("full", images));
+    return { min: Math.min(images, max), max, target: max };
+  }
   const max = Math.min(Math.floor(images * KNOWLEDGE_FULL_PAGE_RATIO.max), KNOWLEDGE_FULL_MAX_TOTAL_PAGES);
   const min = Math.min(Math.ceil(images * KNOWLEDGE_FULL_PAGE_RATIO.min), max);
   return { min, max, target: Math.max(images, Math.min(max, Math.round((min + max) / 2))) };
@@ -45,10 +50,10 @@ export function knowledgeFullPageRange(images: number) {
  * pages：按原稿章序，body 为该图图内文字（source.pages[i].body），hasImage 表示有配图。
  * 返回每章版式与正文字数预算：一律图文同页（inline），预算 KNOWLEDGE_LEAD_PAGE_CHARS；不分配跨页名额。
  */
-export function knowledgeHandbookPagePlan(level: KnowledgeEditionLevel | undefined, pages: readonly { id: string; body: string; hasImage: boolean }[]): KnowledgeHandbookPagePlan {
+export function knowledgeHandbookPagePlan(level: KnowledgeEditionLevel | undefined, pages: readonly { id: string; body: string; hasImage: boolean }[], budgetVersion?: KnowledgeReadingBudgetVersion): KnowledgeHandbookPagePlan {
   const images = pages.filter(p => p.hasImage).length;
   const density = pages.map(p => (p.hasImage ? visible(p.body) : 0));
-  const range = level === "full" ? knowledgeFullPageRange(images) : null;
+  const range = level === "full" ? knowledgeFullPageRange(images, budgetVersion) : null;
   return {
     level, images, range, spreadSlots: 0,
     chapters: pages.map((p, i) => ({ id: p.id, mode: "inline", maxChars: KNOWLEDGE_LEAD_PAGE_CHARS, density: density[i]! })),
