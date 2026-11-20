@@ -1,12 +1,21 @@
-import { useEffect, useState } from "react";
-import { KnowledgeCardProgress, knowledgeCardStageCounts, type KnowledgeCardProgressState } from "./KnowledgeCardProgress";
+import { useEffect, useRef, useState } from "react";
+import { KnowledgeCardProgress, knowledgeEditionStageLabel, knowledgeCardStageCounts, type KnowledgeCardProgressState } from "./KnowledgeCardProgress";
 import { pollJobUntilTerminal } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../../server/routers";
 export type RecoveredKnowledgeCard = inferRouterOutputs<AppRouter>["mvAnalysis"]["getKnowledgeCardRecovery"];
 type Listing = inferRouterOutputs<AppRouter>["mvAnalysis"]["listKnowledgeCardRecovery"];
-export function KnowledgeCardRecovery({disabled,onApply}:{disabled:boolean;onApply:(value:RecoveredKnowledgeCard)=>boolean}) {
+type ResumeDraft = inferRouterOutputs<AppRouter>["mvAnalysis"]["getLastKnowledgeVerificationDraft"];
+export function KnowledgeCardRecovery({disabled,onApply,onStart,onFinish}:{
+  disabled:boolean;
+  onApply:(value:RecoveredKnowledgeCard)=>boolean;
+  onStart:(draft:ResumeDraft)=>boolean;
+  onFinish:(value:RecoveredKnowledgeCard)=>boolean;
+}) {
+  const actions=useRef({onStart,onApply,onFinish});
+  actions.current={onStart,onApply,onFinish};
+  const autoApplyJob=useRef("");
   const resume=trpc.mvAnalysis.resumeLastKnowledgeVerification.useMutation();
   const [watchVersion,setWatchVersion]=useState(0);
   const remove=trpc.mvAnalysis.deleteKnowledgeCardRecovery.useMutation();
@@ -24,13 +33,12 @@ export function KnowledgeCardRecovery({disabled,onApply}:{disabled:boolean;onApp
     setWatchStatus("正在读取原任务…");
     void pollJobUntilTerminal(watched,{
       signal:controller.signal, intervalMs:5000, maxWaitMs:Number.MAX_SAFE_INTEGER,
-      onPoll:({status,output})=>{
+      onPoll:({status,output,updatedAt})=>{
         if(controller.signal.aborted)return;
-        const stages:Record<string,string>={verifying:"联网核实与修订",merging:"汇总知识与疑点",deriving:"整理稿件",revising:"保存核实结果",finishing:"保存成稿"};
-        const stage=stages[String(output?.distillStage)] || "处理中";
+        const stage = knowledgeEditionStageLabel(output);
         if(status==="running"){
           setWatchStatus("");
-          setWatchProgress({status:"running",percent:Number(output?.distillPercent)||0,label:stage,...knowledgeCardStageCounts(output||{})});
+          setWatchProgress({status:"running",stepNumber:Number(output?.editionStepNumber)||undefined,stepTotal:Number(output?.editionStepTotal)||undefined,lastUpdate:updatedAt,checkedAt:new Date().toISOString(),percent:Number(output?.distillPercent)||0,label:stage,...knowledgeCardStageCounts(output||{})});
         }else if(status==="queued"){
           setWatchStatus("等待后台领取");setWatchProgress({status:"idle",percent:0});
         }
@@ -42,6 +50,11 @@ export function KnowledgeCardRecovery({disabled,onApply}:{disabled:boolean;onApp
         setWatchStatus("核实完成，正在读取正文备份…");
         void utils.mvAnalysis.getKnowledgeCardRecovery.fetch({jobId:watched},{staleTime:0}).then(value=>{
           if(controller.signal.aborted)return;
+          if(autoApplyJob.current===watched && actions.current.onFinish(value)){
+            autoApplyJob.current="";
+            setWatchStatus("核实完成，成稿已回填到手册文本框。");
+            return;
+          }
           setCandidate(value);
           setWatchStatus("核实完成，请核对预览后恢复正文。");
         }).catch(()=>{if(!controller.signal.aborted)setWatchStatus("核实完成，可从备份列表找回正文。");});
@@ -54,7 +67,15 @@ export function KnowledgeCardRecovery({disabled,onApply}:{disabled:boolean;onApp
   async function resumeLast(){
     setBusy(true);setOpen(true);setError("");setCandidate(null);
     try {
-      const {jobId}=await resume.mutateAsync();
+      const draft=await utils.mvAnalysis.getLastKnowledgeVerificationDraft.fetch(undefined,{staleTime:0});
+      if(draft.finished){
+        const value=await utils.mvAnalysis.getKnowledgeCardRecovery.fetch({jobId:draft.jobId},{staleTime:0});
+        if(actions.current.onApply(value)){setOpen(false);setWatched("");}
+        return;
+      }
+      if(!actions.current.onStart(draft))return;
+      const {jobId}=await resume.mutateAsync({jobId:draft.jobId});
+      autoApplyJob.current=jobId;
       setWatchInput(jobId);setWatched(jobId);setWatchVersion(v=>v+1);
     }catch(e){setError(e instanceof Error?e.message:"无法续作，请稍后重试");}
     finally{setBusy(false);}
@@ -76,7 +97,7 @@ export function KnowledgeCardRecovery({disabled,onApply}:{disabled:boolean;onApp
       <label className="block">后台核实任务编号
         <input className="ml-2 rounded border bg-transparent px-2" value={watchInput} disabled={Boolean(watched)} onChange={e=>setWatchInput(e.target.value.trim())} placeholder="kc_…" />
       </label>
-      {watched?<button type="button" onClick={()=>{setWatched("");setWatchStatus("");}}>停止查看进度</button>:
+      {watched?<button type="button" onClick={()=>{autoApplyJob.current="";setWatched("");setWatchStatus("");}}>停止查看进度</button>:
         <button type="button" disabled={!/^kc_[a-f0-9]{56}$/.test(watchInput)} onClick={()=>setWatched(watchInput)}>查看原任务进度</button>}
       {watched&&<KnowledgeCardProgress state={watchProgress}/>}
       {watched&&watchStatus&&<p role="status">{watchStatus}</p>}

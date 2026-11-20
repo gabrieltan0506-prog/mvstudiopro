@@ -8101,9 +8101,10 @@ export default function PlatformPage() {
   /** customNoteImages 的同步镜像：计数用，不在 state updater 里做副作用 */
   const customNoteImagesRef = useRef<string[]>([]);
   const recoveryBlocked = customNoteBusy || knowledgeCardPdfBusy || customNoteUploadBusy || customNoteLevelSwitching || Boolean(customNoteDistillJobId) || Boolean(customNotePreflight);
-  const applyKnowledgeCardRecovery = (backup: RecoveredKnowledgeCard): boolean => {
+  const resumeRevision = useRef<{jobId:string;revision:number}|null>(null);
+  const applyKnowledgeCardRecovery = (backup: RecoveredKnowledgeCard, confirmed=false): boolean => {
     if (recoveryBlocked || customNotePendingConfirmRef.current) { toast.info("请先结束当前任务或出图确认，再恢复备份"); return false; }
-    if ((customNoteText.trim() || customNoteImages.some(Boolean) || customNotePendingFilesRef.current.length) && !window.confirm("恢复会替换当前手册正文与图片。确定恢复所选云端备份吗？")) return false;
+    if (!confirmed && (customNoteText.trim() || customNoteImages.some(Boolean) || customNotePendingFilesRef.current.length) && !window.confirm("恢复会替换当前手册正文与图片。确定恢复所选云端备份吗？")) return false;
     bumpCustomNoteRevision();
     renderRunIdRef.current += 1;
     customNotePendingFilesRef.current = []; setCustomNotePendingMeta([]); setCustomNoteUploadStatus(null);
@@ -14964,7 +14965,17 @@ export default function PlatformPage() {
                     <><Film className="h-4 w-4" />生成编导分镜图</>
                   )}
                 </button>
-                <KnowledgeCardRecovery key={workbenchUserKey ?? "guest"} disabled={recoveryBlocked} onApply={applyKnowledgeCardRecovery} />
+                <KnowledgeCardRecovery key={workbenchUserKey ?? "guest"} disabled={recoveryBlocked} onApply={applyKnowledgeCardRecovery}
+                  onStart={draft=>{
+                    const ok=applyKnowledgeCardRecovery({jobId:draft.jobId,markdown:draft.markdown,fullMarkdown:draft.markdown,conciseMarkdown:null,
+                      verificationJobId:null,distillModel:draft.model,detailLevel:"full",total:0,images:[],subjectPosition:"left",infographicTemplateId:null});
+                    if(ok)resumeRevision.current={jobId:draft.jobId,revision:customNoteRevisionRef.current};
+                    return ok;
+                  }}
+                  onFinish={value=>{
+                    if(resumeRevision.current?.jobId!==value.jobId || resumeRevision.current.revision!==customNoteRevisionRef.current)return false;
+                    return applyKnowledgeCardRecovery(value,true);
+                  }} />
                 {(customNoteImageUpper || customNoteImageLower || customNoteError || customOptimizeResult) && !customNoteBusy && (
                   <button
                     type="button"

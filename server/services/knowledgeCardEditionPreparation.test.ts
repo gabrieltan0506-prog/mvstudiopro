@@ -1,4 +1,5 @@
 import {it,expect,vi} from 'vitest';
+import {editionStepPosition} from '../../shared/knowledgeEditionSteps';
 import {prepareKnowledgeCardEditions} from './knowledgeCardEditionPreparation';
 import {knowledgeEditionParts} from '../../shared/knowledgeCardEdition';
 import {planKnowledgeCardPages} from '../../shared/knowledgeCardPagination';
@@ -17,7 +18,11 @@ it('正式两档只选择原章，完整知识不二次浓缩；逐页保存且�
   return {status:200,text:JSON.stringify({candidates:[{content:{parts:[{text:JSON.stringify({pages:[{body:'模型错误改写',reading:{blocks:[0,1,2].map(i=>({title:`原始主题${i}`,type:'prose',text:'只选身份，不采用模型改写内容',note:''}))}}]})}]}}]})};
  });
  const evidence={prefix:'test/edition',read:async(k:string)=>storage.get(k)||null,save:async(k:string,v:any)=>{storage.set(k,v);}};
- const result=await prepareKnowledgeCardEditions({sourceMarkdown,evidence,measure:async()=>2,invoke:invoke as any,targetSections:3});
+ const positions:number[]=[];
+ const result=await prepareKnowledgeCardEditions({sourceMarkdown,evidence,measure:async()=>2,invoke:invoke as any,targetSections:3,
+   onProgress:p=>{if(p.step)positions.push(editionStepPosition(p.step,false).editionStepNumber || 0);}
+ });
+ expect(positions).toEqual([5,6,7,8,9,10,11,12,13]);
  const full=knowledgeEditionParts(result.fullEditionMarkdown)!,concise=knowledgeEditionParts(result.markdown)!;
  for(let i=0;i<18;i++)for(const edition of [full,concise]){
   expect(edition.knowledge).toContain(`保留数值${100+i}克`);expect(edition.knowledge).toContain(`| 项${i} | 每天${i+1}次 |`);

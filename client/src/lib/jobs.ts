@@ -6,6 +6,7 @@ export type JobType = "video" | "image" | "audio";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
 
 export type JobResponse = {
+  updatedAt?: string;
   status: JobStatus;
   output?: Record<string, any>;
   error?: string;
@@ -369,6 +370,7 @@ export async function getJobForPoll(jobId: string, signal?: AbortSignal): Promis
 
 /** 单次 GET /api/jobs/:id 后回调（含第几次、当前状态、耗时、部分 output） */
 export type PollJobTick = {
+  updatedAt?: string;
   jobId: string;
   attempt: number;
   status: JobStatus;
@@ -426,6 +428,7 @@ export async function pollJobUntilTerminal(
       jobId,
       attempt,
       status: j.status,
+      updatedAt: j.updatedAt,
       elapsedMs: Date.now() - t0,
       output: out,
     });

@@ -3241,8 +3241,10 @@ export const appRouter = router({
     ...videoPartialEditProcedures,
     ...coverCandidateProcedures,
     ...topicDigestProcedures,
-    resumeLastKnowledgeVerification: protectedProcedure.mutation(async ({ ctx }) =>
-      (await import("./services/knowledgeCardRecovery")).resumeLastKnowledgeVerification(String(ctx.user.id))),
+    getLastKnowledgeVerificationDraft: protectedProcedure.query(async ({ctx}) =>
+      (await import("./services/knowledgeCardRecovery")).getLastKnowledgeVerificationDraft(String(ctx.user.id))),
+    resumeLastKnowledgeVerification: protectedProcedure.input(z.object({jobId:z.string().min(1).max(100)}).optional()).mutation(async ({ ctx,input }) =>
+      (await import("./services/knowledgeCardRecovery")).resumeLastKnowledgeVerification(String(ctx.user.id),input?.jobId)),
     listKnowledgeCardRecovery: protectedProcedure
       .input(z.object({ cursor: z.object({ at: z.string().datetime(), id: z.string().min(1).max(100) }).optional() }))
       .query(async ({ctx,input}) => (await import("./services/knowledgeCardRecovery")).listKnowledgeCardRecovery(String(ctx.user.id),input.cursor)),

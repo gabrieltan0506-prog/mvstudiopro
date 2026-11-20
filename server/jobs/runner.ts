@@ -1,3 +1,4 @@
+import { editionStepPosition } from "../../shared/knowledgeEditionSteps";
 import { editionCheckpointRequeueDelay, isTransientEditionCheckpointError } from "../services/knowledgeEditionRecovery";
 import { normalizeCanvasImageAspectRatio } from "../../shared/canvasGptImage2JobInput";
 import { startFileConversionWorker, stopFileConversionWorker, drainFileConversions, fileConversionsBusy } from "./fileConversionWorker";
@@ -3779,19 +3780,25 @@ async function processPlatformJob(
       await cancel.check({ force: true });
       await patchProgress({ distillStage: "deriving", distillPercent: 1 });
       const { knowledgeCardDistillActivity } = await import("../services/knowledgeCardDistillActivity.js");
+      let cachedEdition = false;
       const deriveOptions = {
         fullMarkdown,
         targetSections,
         abortSignal: cancel.signal,
         // 终审第五条：链序按服务端 receipt 档位走，不信客户端声明
         model: receiptModel,
-        onProgress: async (p: {doneBatches:number;totalBatches:number;pass:number}) => {
+        onProgress: async (p: {doneBatches:number;totalBatches:number;pass:number;step?:string}) => {
           const frac = p.totalBatches > 0 ? Math.min(1, p.doneBatches / p.totalBatches) : 0;
+          if (p.step === "读取成稿并整理标题") cachedEdition = true;
+          const step = p.step || ({1:"整理原稿",2:"汇总知识与疑点",3:"联网核实与修订",4:"保存核实结果"} as Record<number,string>)[p.pass];
+          const position = editionStepPosition(step,cachedEdition);
+          const finishingPercent = cachedEdition ? 95 : 70 + Math.max(0,(position.editionStepNumber || 4)-4)*3;
           await patchProgress({
             distillStage: params.editionVersion===2 ? (p.pass===3?"verifying":p.pass===4?"revising":p.pass===2?"merging":"deriving") : "deriving",
-            distillStageDone: p.doneBatches,
-            distillStageTotal: p.totalBatches,
-            distillPercent: params.editionVersion===2 ? Math.round(p.pass===1?5+35*frac:p.pass===2?40+10*frac:p.pass===3?50+20*frac:70+25*frac) : Math.round(5 + 90 * frac),
+            ...(params.editionVersion===2 ? {distillStep:step,...position} : {}),
+            distillStageDone: params.editionVersion===2 && p.pass===4 ? 0 : p.doneBatches,
+            distillStageTotal: params.editionVersion===2 && p.pass===4 ? 0 : p.totalBatches,
+            distillPercent: params.editionVersion===2 ? Math.round(p.pass===1?5+35*frac:p.pass===2?40+10*frac:p.pass===3?50+20*frac:finishingPercent) : Math.round(5 + 90 * frac),
           });
         },
       };
@@ -3803,10 +3810,13 @@ async function processPlatformJob(
           evidence:{prefix:`knowledge-editions/user-${jobUserId}/${platformJobId}`,
             listKeys:prefix=>listGcsObjectNamesByPrefix({prefix,allPages:true}),
             read:async key=>{try{return JSON.parse((await downloadGcsObjectVersioned({gcsUri:`gs://${getGcsBucketName()}/${key}`})).buffer.toString());}catch(error){if((error as Error).message==='gcs_stat_failed:404')return null;throw error;}},
-            save:async(key,value)=>{await uploadBufferToGcs({objectName:key,buffer:Buffer.from(JSON.stringify(value)),contentType:'application/json'});},
+            save:async(key,value)=>{
+              await uploadBufferToGcs({objectName:key,buffer:Buffer.from(JSON.stringify(value)),contentType:'application/json'});
+              touchJobHeartbeat(platformJobId);
+            },
           }});
       });
-      await patchProgress({ distillStage: "finishing", distillPercent: 98 });
+      await patchProgress({ distillStage: "finishing", distillPercent: 98, distillStep:"登记成稿", ...(params.editionVersion===2 ? editionStepPosition("登记成稿",cachedEdition) : {}) });
       // 落库之前强制查一次（跳过轮询间隔缓存）：取消赢了就不写 receipt、不交稿
       await cancel.check({ force: true });
       const plan = planKnowledgeCardPages(derived.markdown, distillModel);

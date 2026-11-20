@@ -4,7 +4,7 @@
  */
 import { assertKnowledgeCardIllustrationSelection } from "@shared/knowledgeCardIllustrationSelection";
 import { knowledgeCardFullManuscript, knowledgeCardInputFingerprint, knowledgeCardInputKey } from "@shared/knowledgeCardSourceIdentity";
-import { knowledgeCardProgressFromDistill, knowledgeCardStageCounts } from "@/components/platform/KnowledgeCardProgress";
+import { knowledgeEditionStageLabel, knowledgeCardProgressFromDistill, knowledgeCardStageCounts } from "@/components/platform/KnowledgeCardProgress";
 import { knowledgeCardRecoveryMessage, knowledgeCardTrackedJobId, submitKnowledgeCardOnce } from "@/lib/knowledgeCardTrackedSubmission";
 import { knowledgeEditionParts } from "@shared/knowledgeCardEdition";
 import { planKnowledgeCardPages } from "@shared/knowledgeCardPagination";
@@ -126,16 +126,17 @@ export function useKnowledgeCardDistill(deps: UseKnowledgeCardDistillDeps) {
         intervalMs: 3000,
         // 服务端不设总时长（只按连续无进度判死），前端也不设：轮询到终态为止
         maxWaitMs: Number.MAX_SAFE_INTEGER,
-        onPoll: ({ output }) => {
+        onPoll: ({ output,updatedAt }) => {
           // 稿子已经换过：这条派生的进度与当前文本框无关，不许再动进度条
           if (revision !== customNoteRevisionRef.current) return;
           const out = (output || {}) as { distillPercent?: number; distillStage?: string; distillStageDone?: number; distillStageTotal?: number };
-          const total = Number(out.distillStageTotal) || 0;
-          const stage=out.distillStage==="verifying"?"联网核实与修订":out.distillStage==="revising"?"保存核实结果":out.distillStage==="merging"?"汇总知识与疑点":"提炼整理";
-          const label=total?`${stage} ${Number(out.distillStageDone)||0}/${total} 批`:stage+"…";
+          const {stageTotal:total, stageDone:done} = knowledgeCardStageCounts(out);
+          const stage = knowledgeEditionStageLabel(out);
+          const label = total ? `${stage} ${done || 0}/${total} 批` : stage;
           setCustomNoteUploadStatus(label);
           setCustomNoteProgress({
             status: "running",
+            stepNumber:Number(output?.editionStepNumber)||undefined,stepTotal:Number(output?.editionStepTotal)||undefined,lastUpdate:updatedAt, checkedAt:new Date().toISOString(),
             percent: Math.max(1, Math.min(97, Number(out.distillPercent) || 1)),
             label,
             ...knowledgeCardStageCounts(out),

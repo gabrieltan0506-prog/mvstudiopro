@@ -95,10 +95,12 @@ export async function deleteKnowledgeCardRecovery(userId:string,jobId:string){
   return markKnowledgeRecoveryDeleted(userId,anchor);
 }
 /** 续作沿用原单及其检查点。已领取的任务只跟踪；明确取消的任务保持终止。 */
-export async function resumeLastKnowledgeVerification(userId: string) {
+async function latestVerification(userId: string, includeDraft=false) {
   const db = await database();
   const [last] = await db.select({
     id: jobs.id, status: jobs.status, attempts: jobs.attempts,
+    manuscript: includeDraft ? sql<string | null>`case when ${jobs.status} <> 'succeeded' then ${jobs.input}->'params'->>'fullMarkdown' end` : sql<null>`null`,
+    model: sql<string | null>`${jobs.input}->'params'->>'distillModel'`,
     action: sql<string>`${jobs.input}->>'action'`,
     cancelled: sql<string | null>`${jobs.input}->>'cancelRequestedAt'`,
   }).from(jobs).where(and(eq(jobs.userId, userId), eq(jobs.type, "platform"),
@@ -106,6 +108,19 @@ export async function resumeLastKnowledgeVerification(userId: string) {
   )).orderBy(desc(jobs.createdAt), desc(jobs.id)).limit(1);
   if (!last || last.action !== "knowledge_card_derive_level") throw new Error("最近一次读档还没有可接续的核实任务");
   if (last.cancelled) throw new Error("原任务已手动终止");
+  return last;
+}
+
+export async function getLastKnowledgeVerificationDraft(userId:string) {
+  const last = await latestVerification(userId,true);
+  if (last.status !== "succeeded" && !last.manuscript?.trim()) throw new Error("原任务没有可回填的正文");
+  return {jobId:last.id, markdown:last.manuscript || "", model:last.model || "", finished:last.status==="succeeded"};
+}
+
+export async function resumeLastKnowledgeVerification(userId: string, expectedId?:string) {
+  const db = await database();
+  const last = await latestVerification(userId);
+  if (expectedId && expectedId !== last.id) throw new Error("最近任务已变化，请重新选择续作");
   if (last.status !== "failed") return { jobId: last.id };
   const ownerAndId = and(eq(jobs.id,last.id),eq(jobs.userId,userId));
   const updated = await db.update(jobs).set({status:"queued",error:null,updatedAt:new Date()})

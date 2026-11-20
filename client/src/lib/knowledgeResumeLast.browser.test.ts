@@ -2,12 +2,12 @@ import { expect, it } from "vitest";
 import { build } from "esbuild";
 import puppeteer from "puppeteer";
 
-it("点击续作后显示原单进度，完成后由用户选择恢复正文", async () => {
+it("点击续作后显示原单进度，先回填底稿，完成后自动回填成稿", async () => {
   const bundle = await build({
     stdin: {resolveDir:process.cwd(),loader:"tsx",contents:`
       import {createRoot} from "react-dom/client";
       import {KnowledgeCardRecovery} from "./client/src/components/platform/KnowledgeCardRecovery";
-      createRoot(document.getElementById("root")).render(<KnowledgeCardRecovery disabled={false} onApply={v=>{window.applied=v.markdown;return true;}}/>);
+      createRoot(document.getElementById("root")).render(<KnowledgeCardRecovery disabled={false} onStart={d=>{window.draft=d.markdown;return true;}} onFinish={v=>{window.applied=v.markdown;return true;}} onApply={v=>{window.applied=v.markdown;return true;}}/>);
     `},
     bundle:true,write:false,jsx:"automatic",define:{"process.env.NODE_ENV":'"production"'},
     plugins:[{name:"模拟任务边界",setup(b){
@@ -16,9 +16,10 @@ it("点击续作后显示原单进度，完成后由用户选择恢复正文", a
         export async function pollJobUntilTerminal(id,opts){
           window.polled=id;
           opts.onPoll({status:"running",output:{distillStage:"verifying",distillStageDone:915,distillStageTotal:1092}});
+          window.finishStage=()=>opts.onPoll({status:"running",updatedAt:"2026-11-20T12:43:00Z",output:{distillStage:"revising",distillStep:"保存完整版正文和章节",editionStepNumber:7,editionStepTotal:14,distillStageDone:1092,distillStageTotal:1092}});
           return new Promise(resolve=>window.finish=()=>resolve({status:"succeeded"}));
         }`:`
-        const utils={mvAnalysis:{getKnowledgeCardRecovery:{fetch:async()=>({markdown:"续作成稿",total:0,images:[]})}}};
+        const utils={mvAnalysis:{getLastKnowledgeVerificationDraft:{fetch:async()=>({jobId:"kc_original",markdown:"原任务底稿",finished:false})},getKnowledgeCardRecovery:{fetch:async()=>({markdown:"续作成稿",total:0,images:[]})}}};
         export const trpc={useUtils:()=>utils,mvAnalysis:{
           deleteKnowledgeCardRecovery:{useMutation:()=>({})},
           resumeLastKnowledgeVerification:{useMutation:()=>({mutateAsync:async()=>({jobId:"kc_original"})})}
@@ -33,10 +34,16 @@ it("点击续作后显示原单进度，完成后由用户选择恢复正文", a
     await page.locator('::-p-text(从上次任务续作)').click();
     await page.waitForFunction(()=>document.body.innerText.includes("915/1092"));
     expect(await page.evaluate(()=>(window as any).polled)).toBe("kc_original");
+    await page.evaluate(()=>(window as any).finishStage());
+    await page.waitForFunction(()=>document.body.innerText.includes("保存完整版正文和章节"));
+    const text = await page.evaluate(()=>document.body.innerText);
+    expect(await page.evaluate(()=>(window as any).draft)).toBe("原任务底稿");
+    expect(text).toContain("本步完成后还剩 7 步");
+    expect(text).toContain("后台最近更新");
+    expect(text).toContain("页面最近查询");
+    expect(text).not.toContain("1092/1092");
     await page.evaluate(()=>(window as any).finish());
-    await page.waitForFunction(()=>document.body.innerText.includes("续作成稿"));
-    expect(await page.evaluate(()=>(window as any).applied)).toBeUndefined();
-    await page.locator('::-p-text(恢复正文与已有图片)').click();
+    await page.waitForFunction(()=>document.body.innerText.includes("成稿已回填"));
     expect(await page.evaluate(()=>(window as any).applied)).toBe("续作成稿");
   }finally{await browser.close();}
 },60000);

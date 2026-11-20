@@ -989,6 +989,7 @@ async function startServer() {
 
       return res.status(200).json({
         status: job.status,
+        updatedAt: job.updatedAt,
         output,
         error: job.error ?? undefined,
       });
