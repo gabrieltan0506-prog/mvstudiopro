@@ -11,7 +11,8 @@ import {
 import { stripKnowledgeCardPageRefs } from "./knowledgeCardPageRefs.js";
 import { knowledgeEditionParts } from './knowledgeCardEdition';
 import { planKnowledgeTopicImages, readKnowledgeTopicTitles, type KnowledgeTopicImage } from './knowledgeTopicImagePlan';
-import { attachKnowledgeTextModules } from './knowledgeTextAttachment';
+import { attachKnowledgeTextModules, attachKnowledgeTextModulesInBookOrder } from './knowledgeTextAttachment';
+import { KNOWLEDGE_SUPPLEMENT_MAX_CHARS } from './knowledgePublication';
 import { knowledgePlanCache } from './knowledgePlanCache';
 
 export const knowledgeCardPagesCache = knowledgePlanCache<Map<string, KnowledgeCardPagePlan>>();
@@ -555,11 +556,39 @@ function computeKnowledgeEditionIllustratedPages(markdown: string) {
   if (!plan) return null;
   const textModules = plan.textModules.filter(m => m.body.trim());
   const attached = attachKnowledgeTextModules(plan.images.map(image => `${image.body}\n\n${image.overflow}`), textModules);
-  return plan.images.map((image, i) => ({
+  const pages = plan.images.map((image, i) => ({
     body: image.body,
     headline: image.readingTitle,
     imageTitle: image.title,
     // 图外细节按原顺序在前，并入的独立文字模块在后。
     supplement: [image.overflow, attached[i]].filter(part => part?.trim()).join('\n\n'),
   }));
+  // 版本隔离（2026-11-21）：按相似度归属的结果每页都在原稿上限内 → 原样返回（已保存的稿件、核实回执逐页核对都逐字不变）。
+  // 只有超限时（这种稿过去在出图前检查/原稿校验就被拒，从未保存过）才改按原书顺序归属并均衡到相邻图页，
+  // 例如大书精华版三千多个未选章节按相似度挤进一页、单页上百万字。
+  if (pages.every(page => page.supplement.length <= KNOWLEDGE_SUPPLEMENT_MAX_CHARS)) return pages;
+  const ordered = knowledgeEditionTextModulesInBookOrder(markdown, plan);
+  const room = (overflow: string) => KNOWLEDGE_SUPPLEMENT_MAX_CHARS - (overflow.trim() ? overflow.length + 2 : 0);
+  const inOrder = attachKnowledgeTextModulesInBookOrder(plan.images.map(image => room(image.overflow)), ordered);
+  return pages.map((page, i) => ({ ...page, supplement: [plan.images[i]!.overflow, inOrder[i]].filter(part => part?.trim()).join('\n\n') }));
+}
+
+/**
+ * 文字模块按原书顺序各自归到它前面最近的一张主题图（开头的归第一张）。
+ * 主题图是相邻图模块的连续分组（partitionKnowledgeTopics），按各图 headlines 顺序对回原书中的图模块。
+ * 与相似度归属取同一批文字模块（正文非空），模块本身不改。
+ */
+function knowledgeEditionTextModulesInBookOrder(markdown: string, plan: KnowledgeEditionImagePlan) {
+  const edition = knowledgeEditionParts(String(markdown || ''))!;
+  const expected = plan.images.flatMap((image, index) => image.headlines.map(headline => ({ headline, index })));
+  let cursor = 0, current = 0;
+  const out: { headline: string; body: string; anchor: number }[] = [];
+  for (const module of edition.modules) {
+    if (module.medium === 'image') {
+      const next = expected[cursor];
+      // 无内容被出图规划略过的图模块不占图位，不推进。
+      if (next && next.headline === module.headline.trim()) { current = next.index; cursor++; }
+    } else if (module.body.trim()) out.push({ headline: module.headline, body: module.body, anchor: current });
+  }
+  return out;
 }

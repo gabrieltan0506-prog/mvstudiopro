@@ -92,3 +92,95 @@ export function bestKnowledgeTextMatch(candidates: readonly string[], query: str
   grams.forEach((g, i) => { const s = similarity(q, g, df, grams.length + 1); if (s > score) { best = i; score = s; } });
   return best;
 }
+
+/** 按原书顺序归属的文字模块：anchor = 原书中它前面最近一张图的序号（开头无图时为 0）。 */
+export type KnowledgeOrderedTextModule = { headline: string; body: string; anchor: number };
+
+const orderedBlock = (headline: string, body: string) => `### ${headline}\n\n${body.trim()}`;
+
+/** 单个模块比可用页容量还长时按段落切块（段落仍过长才按字数切），标题加「（续n）」；只切不删。 */
+function splitOversizedModule(text: KnowledgeOrderedTextModule, limit: number): KnowledgeOrderedTextModule[] {
+  const room = Math.max(1000, limit - text.headline.length - 16);
+  const paragraphs = text.body.trim().split(/\n\s*\n/).flatMap(p => {
+    const out: string[] = [];
+    for (let i = 0; i < p.length; i += room) out.push(p.slice(i, i + room));
+    return out;
+  });
+  const chunks: string[] = [];
+  let current = "";
+  for (const p of paragraphs) {
+    if (current && current.length + 2 + p.length > room) { chunks.push(current); current = ""; }
+    current = current ? `${current}\n\n${p}` : p;
+  }
+  if (current) chunks.push(current);
+  return chunks.map((body, k) => ({ headline: k ? `${text.headline}（续${k}）` : text.headline, body, anchor: text.anchor }));
+}
+
+/**
+ * 按原书顺序把文字模块归到图页（站长 2026-11-20 口径：文字归文字，按原书顺序接在图后）。
+ * - 自然归属：每个模块归到 anchor（它前面最近的图），保持原书先后；
+ * - capacities[i] = 第 i 页还能放的字数（上限减去该页图外细节）。某页超容量时，以它为中心向两侧逐步扩大相邻图页窗口，
+ *   直到窗口内文字不超过窗口容量的一半（全书本身更满时按全书比例），再把窗口内文字按原书顺序连续、按各页容量等比例重分；
+ *   窗口外各页不动。只移动整块，不改写、不丢、不重排模块；单个模块超出页容量时先按段落切块。
+ * 总量超过全部页容量时抛错（出图前即报，不扣费）。
+ */
+export function attachKnowledgeTextModulesInBookOrder(capacities: readonly number[], texts: readonly KnowledgeOrderedTextModule[]): string[] {
+  const n = capacities.length;
+  if (!n || !texts.length) return capacities.map(() => "");
+  const caps = capacities.map(c => Math.max(0, c));
+  const largest = Math.max(...caps);
+  const units = texts.flatMap(t => {
+    const anchor = Math.min(n - 1, Math.max(0, t.anchor));
+    const block = orderedBlock(t.headline, t.body);
+    return block.length + 2 > largest ? splitOversizedModule({ ...t, anchor }, largest) : [{ ...t, anchor }];
+  }).map(t => ({ text: orderedBlock(t.headline, t.body), anchor: t.anchor }));
+  const size = units.map(u => u.text.length + 2);
+  const assign = units.map(u => u.anchor);
+  const load = new Float64Array(n);
+  units.forEach((_, u) => { load[assign[u]!] += size[u]!; });
+  const totalLoad = size.reduce((a, b) => a + b, 0), totalCap = caps.reduce((a, b) => a + b, 0);
+  if (totalLoad > totalCap) throw new Error(`图外文字合计约 ${totalLoad.toLocaleString()} 字，超过全部 ${n} 页可容纳的 ${totalCap.toLocaleString()} 字，尚未开始出图、未扣费`);
+  const fill = Math.max(0.5, totalLoad / totalCap);
+  // 窗口内单元（assign 单调不减，所以是一段连续区间）。
+  const range = (l: number, r: number) => {
+    let a = assign.findIndex(x => x >= l); if (a < 0) a = units.length;
+    let b = a; while (b < units.length && assign[b]! <= r) b++;
+    return [a, b] as const;
+  };
+  const redistribute = (l: number, r: number) => {
+    const [a, b] = range(l, r);
+    let windowLoad = 0, windowCap = 0;
+    for (let u = a; u < b; u++) windowLoad += size[u]!;
+    for (let k = l; k <= r; k++) windowCap += caps[k]!;
+    if (windowLoad > windowCap * fill) return false;
+    const ratio = windowLoad / windowCap;
+    const next = new Float64Array(r - l + 1);
+    const target: number[] = []; let acc = 0;
+    for (let k = l; k <= r; k++) { acc += caps[k]! * ratio; target.push(acc); }
+    const placed: number[] = [];
+    let k = 0, before = 0;
+    for (let u = a; u < b; u++) {
+      // 中点落在哪一页的累计目标内就归哪一页；放不下顺延下一页（单调，保持原书顺序）。
+      while (k < r - l && before + size[u]! / 2 > target[k]!) k++;
+      while (k <= r - l && next[k]! + size[u]! > caps[l + k]!) k++;
+      if (k > r - l) return false;
+      next[k] += size[u]!; placed.push(l + k); before += size[u]!;
+    }
+    placed.forEach((page, i) => { assign[a + i] = page; });
+    for (let j = l; j <= r; j++) load[j] = next[j - l]!;
+    return true;
+  };
+  for (let i = 0; i < n; i++) {
+    if (load[i]! <= caps[i]!) continue;
+    let l = i, r = i, grow = 0;
+    while (!redistribute(l, r)) {
+      if (l === 0 && r === n - 1) throw new Error("图外文字无法按原书顺序装入各页，尚未开始出图、未扣费");
+      // 两侧交替扩大；一侧到头就只扩另一侧。
+      if ((grow++ % 2 === 0 && r < n - 1) || l === 0) r++; else l--;
+    }
+    i = Math.max(-1, l - 1);
+  }
+  const result = capacities.map(() => [] as string[]);
+  units.forEach((unit, u) => result[assign[u]!]!.push(unit.text));
+  return result.map(parts => parts.join("\n\n"));
+}
