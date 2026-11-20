@@ -15,7 +15,7 @@ const publicationProcedure = protectedProcedure.use(async ({ next, path }) => {
   const result = await next();
   // 每个图文手册接口一行耗时（不含正文与地址），用于定位阶段间空档。
   // 导出状态轮询（每 3 秒）成功时不逐条记，避免刷屏；任务本身另有 knowledgeExport.task 耗时日志。
-  if (!(result.ok && path.endsWith("exportPublicationStatus"))) knowledgeTimingLog(path, startedAt, { ok: result.ok });
+  if (!(result.ok && (path.endsWith("exportPublicationStatus") || path.endsWith("bookLayoutProgress")))) knowledgeTimingLog(path, startedAt, { ok: result.ok });
   if (!result.ok) {
     // 前台只收到业务提示；真实原因留在服务端日志（去地址、截断），否则出错后后台无从查起。
     const cause = result.error.cause instanceof Error ? result.error.cause.message : result.error.message;
@@ -44,6 +44,11 @@ export const editableLayoutRouter = router({
     // 同一云稿版本复用解析结果（顾问整册排版发车前也读同一份）。
     const book=await loadKnowledgeBookLayoutInput(ctx.user.id,input.documentId,{},{cache:true});
     return {sourceDigest:book.sourceDigest,chapters:book.pages.length,images:book.pages.filter(p=>p.hasImage).length};
+  }),
+  /** 整册排版分组进度（只读清点已落盘的分组结果；不调模型、不扣费、不写对象）。 */
+  bookLayoutProgress: publicationProcedure.input(z.object({documentId:z.string().uuid(),requestId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
+    const {loadKnowledgeBookLayoutProgress}=await import("../services/knowledgeBookLayoutProgress");
+    return loadKnowledgeBookLayoutProgress(ctx.user.id,input.documentId,input.requestId);
   }),
   bookLayoutPreview: publicationProcedure.input(z.object({documentId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
     const {currentLayoutGeneration}=await import("../services/editableLayoutStore");

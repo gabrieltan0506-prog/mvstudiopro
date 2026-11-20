@@ -688,7 +688,7 @@ async function readKnowledgeBatchReports(source:KnowledgeSource,digest:string,ro
  * 已开始旧流程（已落盘 consistency-plan.json）的稿件沿用原批次与原回执，零调用恢复，不改请求身份。
  * 没有生图前核实记录的稿件（改稿后、旧稿）这一轮仍是唯一一次联网核实，保持不变。
  */
-export async function knowledgeSkipsPostReviewConsistency(source:{verificationJobId?:string;readingContract?:string;pages?:readonly {knowledgeRole?:string;supplement?:string}[]},root:string,read:(name:string)=>Promise<any>){
+export async function knowledgeSkipsPostReviewConsistency(source:Pick<Partial<KnowledgeSource>,"verificationJobId"|"readingContract">&{pages?:readonly Pick<KnowledgeSource["pages"][number],"role"|"supplement">[]},root:string,read:(name:string)=>Promise<any>){
   if(source.verificationJobId)return !(await read(`${root}/consistency-plan.json`));
   // 站长 2026-11-21：由两档成稿出图的稿（两档准备必经生图前集中联网核实，仍有疑点的已在稿内标「待验证」）一律不再重复全册核对。
   // 起因：大书回填后没带上已核实标记，审校后又跑一轮全册核对，单次输出超出容量，统稿反复停在第一批。
@@ -698,9 +698,10 @@ export async function knowledgeSkipsPostReviewConsistency(source:{verificationJo
   return !(await read(`${root}/consistency-0/report.json`));
 }
 /** 由两档成稿（主题图 + 图外内文）建立的原稿：新正文合同、全部为配图页、且带有图外内文。按字数分页的旧稿没有图外内文，不在此列。 */
-export function knowledgeSourceFromEditionManuscript(source:{readingContract?:string;pages?:readonly {knowledgeRole?:string;supplement?:string}[]}){
+/** 字段名以云稿原稿页为准（knowledgeSourcePageSchema.role）；1121 首版误读成 knowledgeRole，线上原稿页没有该字段，规则从未生效。 */
+export function knowledgeSourceFromEditionManuscript(source:{readingContract?:string;pages?:readonly Pick<KnowledgeSource["pages"][number],"role"|"supplement">[]}){
   const pages=source.pages||[];
-  return source.readingContract===KNOWLEDGE_READING_CONTRACT&&pages.length>0&&pages.every(p=>p.knowledgeRole==="illustration")&&pages.some(p=>Boolean(p.supplement));
+  return source.readingContract===KNOWLEDGE_READING_CONTRACT&&pages.length>0&&pages.every(p=>p.role==="illustration")&&pages.some(p=>Boolean(p.supplement));
 }
 /** 收费前读取权威批次回执；后半本事实自动分组，每组复用原咨询计费合同。 */
 /**
