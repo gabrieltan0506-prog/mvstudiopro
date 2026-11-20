@@ -7,7 +7,7 @@ import { KNOWLEDGE_DESIGN_INSTRUCTIONS } from "../../shared/knowledgeDecorations
 import { createHash } from "node:crypto";
 import type { EditableLayout } from "../../shared/editableLayout";
 import type { KnowledgePublicationContext } from "../../shared/knowledgePublication";
-import { knowledgeReviewBatches, knowledgeManuscript, parseKnowledgeManuscript } from "../../shared/knowledgePublication";
+import { knowledgeBookLayoutBatches, knowledgeManuscript, parseKnowledgeManuscript } from "../../shared/knowledgePublication";
 import { knowledgeConversationAnswerSchema, KNOWLEDGE_SUPPLEMENT_MAX_PAGES } from "../../shared/knowledgeConversation";
 import { KNOWLEDGE_RESEARCH_MARKER } from "../../shared/knowledgeResearch";
 import { loadKnowledgePublication, readKnowledgeImage } from "./knowledgePublicationAdvisor";
@@ -99,7 +99,7 @@ export async function validateKnowledgeConversationAccess(owner:number,context:K
   const deps={...real,...overrides},doc=await deps.load(owner,context),input=knowledgeConversationInput(doc,context);
   if(input.conversation.requestId!==requestId)throw Error("对话请求编号不一致");
   const book=input.conversation.action === "layout" ? await deps.book(owner,doc.id) : undefined;
-  if (book) for (const indexes of knowledgeReviewBatches({title:book.title,pages:book.pages.map(page=>({...page,imageUrl:""}))})) buildKnowledgeConversationRequest(doc,context,[],book,indexes);
+  if (book) for (const indexes of knowledgeBookLayoutBatches(book)) buildKnowledgeConversationRequest(doc,context,[],book,indexes);
   else buildKnowledgeConversationRequest(doc,context,[],book);
   for(const id of input.conversation.selectedImagePageIds)await deps.authorize(owner,doc.pages.find(p=>p.id===id)!.imageUrl);
   return doc;
@@ -135,7 +135,7 @@ async function reviewKnowledgeLayoutBatches(
   doc: EditableLayout, context: KnowledgePublicationContext, book: KnowledgeBookLayoutInput,
   input: ReturnType<typeof knowledgeConversationInput>, prefix: string, fingerprint: string, deps: typeof real,
 ) {
-  const groups = knowledgeReviewBatches({title:book.title,pages:book.pages.map(page=>({...page,imageUrl:""}))});
+  const groups = knowledgeBookLayoutBatches(book);
   const plan = {fingerprint,batches:groups.map((indexes,index)=>({index,pageIds:indexes.map(i=>book.pages[i].id)}))};
   const priorPlan = await deps.read(`${prefix}/batches.json`);
   if (priorPlan && JSON.stringify(priorPlan)!==JSON.stringify(plan)) throw Error("排版批次身份已变化，未覆盖旧结果");

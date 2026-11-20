@@ -247,6 +247,13 @@ export function knowledgeReviewBatches(source: KnowledgeSource): number[][] {
   if (current.length) batches.push(current);
   return batches;
 }
+/**
+ * 整册排版的章节分组（每组 ≤4 章、≤2.4 万字）：顾问按组并行排版，排版输入的容量也按组判断。
+ * 分组与审校同一规则，排版章节无图外内文与配图任务，故只按正文字数与章数切分；排版发请求与容量预检共用此函数，二者不会分叉。
+ */
+export function knowledgeBookLayoutBatches(book: { title: string; pages: readonly { id: string; headline: string; body: string }[] }): number[][] {
+  return knowledgeReviewBatches({ title: book.title, pages: book.pages.map(page => ({ ...page, imageUrl: "" })) } as KnowledgeSource);
+}
 /** 同一页批/同一次失败重试固定一个事务编号；刷新、断线不产生新编号。 */
 export function knowledgeBatchRequestId(
   root: string,
