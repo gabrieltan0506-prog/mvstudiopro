@@ -8438,12 +8438,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           : null;
         if (stagedManuscript !== null) {
           const { planKnowledgeCardPages } = await import("../shared/knowledgeCardPagination.js");
-          const plannedBody = planKnowledgeCardPages(stagedManuscript).pages[(rawInput.notePageIndex ?? 0) - 1];
+          const { cachedHandbookManuscriptPages } = await import("./services/handbookManuscriptStage");
+          // 同一用户同一摘要只规划一次（摘要已由 loadStaged 逐段核验）；校验语义与原逐次重算相同。
+          const plannedPages = cachedHandbookManuscriptPages(Number(userId), rawInput.manuscriptDigest!, stagedManuscript, undefined, planKnowledgeCardPages);
+          const plannedBody = plannedPages[(rawInput.notePageIndex ?? 0) - 1];
           if (plannedBody === undefined || plannedBody !== rawInput.pageBody) {
             throw new TRPCError({ code: "BAD_REQUEST", message: "本页正文与已上传原稿不一致，请重新确认；未扣费、未提交出图" });
           }
           // 大稿路径：总页数也在占位之前核对（旧路径仍在占位后由 assertKnowledgeCardPageSelection 核对，行为不变）。
-          const plannedTotal = planKnowledgeCardPages(stagedManuscript).pages.length;
+          const plannedTotal = plannedPages.length;
           if (rawInput.notePageTotal !== undefined && rawInput.notePageTotal !== plannedTotal) {
             throw new TRPCError({ code: "BAD_REQUEST", message: "总页数与已上传原稿不一致，请重新确认；未扣费、未提交出图" });
           }

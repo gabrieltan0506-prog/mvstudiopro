@@ -143,7 +143,23 @@ const CACHE_MAX = 4;
 /** 同一用户同一原稿的冷读只做一次：并发逐页请求共用同一次取回，不各自整本拼装 */
 const loading = new Map<string, Promise<string>>();
 /** 测试用：清空进程内全文缓存 */
-export function __clearHandbookManuscriptCacheForTest() { cache.clear(); loading.clear(); }
+export function __clearHandbookManuscriptCacheForTest() { cache.clear(); loading.clear(); planCache.clear(); }
+
+/**
+ * 按「用户 + 原稿摘要 + 读档模型」缓存分页结果（与全文缓存同处、同容量策略）。
+ * 大稿每个逐页出图请求原先对整份暂存稿重复规划（校验本页正文与总页数各一次），32 路并发时同步阻塞事件循环。
+ * 摘要即全文 sha256，同摘要必同全文，分页是纯函数：缓存结果与逐次重算逐字相同。
+ */
+const planCache = new Map<string, readonly string[]>();
+export function cachedHandbookManuscriptPages(userId: number, digest: string, markdown: string, distillModel: string | undefined, plan: (markdown: string, distillModel?: string) => { pages: string[] }): readonly string[] {
+  const key = `${userId}:${digest}:${distillModel ?? ""}`;
+  const hit = planCache.get(key);
+  if (hit) { planCache.delete(key); planCache.set(key, hit); return hit; }
+  const pages = Object.freeze(plan(markdown, distillModel).pages.slice());
+  planCache.set(key, pages);
+  while (planCache.size > CACHE_MAX) planCache.delete(planCache.keys().next().value!);
+  return pages;
+}
 
 /** 取回已封存原稿全文（逐段校验 + 重算摘要）；未封存/缺段/不一致都明确报错，绝不返回部分文本。 */
 export async function loadHandbookManuscript(userId: number, digest: string, store: HandbookManuscriptStore = realStore()): Promise<string> {

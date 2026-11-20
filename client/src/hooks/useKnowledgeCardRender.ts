@@ -17,9 +17,9 @@ import { knowledgeCardProgressFromRender } from "@/components/platform/Knowledge
 import { knowledgeCardRecordedModelLabel } from "@shared/knowledgeCardDistillModels";
 import { HANDBOOK_IMAGE_MODEL, HANDBOOK_IMAGE_TIER_LABEL_ZH, HANDBOOK_IMAGE_VARIANT } from "@shared/openaiImageVariant";
 import { knowledgeCardPlannedTextPages } from "@/lib/knowledgeCardPreflightCounts";
-import { handbookManuscriptNeedsStaging, handbookManuscriptPageBody, stageHandbookManuscript } from "@/lib/handbookManuscriptStage";
+import { handbookManuscriptNeedsStaging, handbookManuscriptPageBody, handbookPrepareFailureMessage, handbookPrepareStepLabel, stageHandbookManuscript, type HandbookPrepareStep } from "@/lib/handbookManuscriptStage";
 import { knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh, knowledgeIllustrationBatchUserMessage } from "@/lib/knowledgeIllustrationBatchCounts";
-import { synchronizedKnowledgeCardSource } from "@shared/knowledgeCardEditableLayout";
+import { knowledgeLayoutSourceOversize, synchronizedKnowledgeCardSource } from "@shared/knowledgeCardEditableLayout";
 import { toast } from "@/lib/platformToast";
 import type { KnowledgeSupplementSelection } from "@shared/knowledgeSupplement";
 
@@ -261,8 +261,8 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
     stageChunk: (input: { digest: string; index: number; count: number; totalChars: number; text: string }) => trpcUtils.client.mvAnalysis.stageKnowledgeCardManuscriptChunk.mutate(input),
     finalize: (input: { digest: string; count: number; totalChars: number }) => trpcUtils.client.mvAnalysis.finalizeKnowledgeCardManuscript.mutate(input),
   });
-  const handbookQuoteInput = async (markdown: string, distillModel: string) => handbookManuscriptNeedsStaging(markdown)
-    ? { manuscriptDigest: await stageHandbookManuscript(markdown, handbookStageApi()), distillModel }
+  const handbookQuoteInput = async (markdown: string, distillModel: string, onUpload?: (uploaded: number, count: number) => void) => handbookManuscriptNeedsStaging(markdown)
+    ? { manuscriptDigest: await stageHandbookManuscript(markdown, handbookStageApi(), onUpload), distillModel }
     : { markdown, distillModel };
 
   const generateCustomNoteOne = async (
@@ -447,6 +447,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
       setCustomOptimizeSummary(null);
     }
     setCustomNoteBusy(true);
+    let prepareStep: HandbookPrepareStep | null = null;
     try {
       if (kind === "optimize_custom_copy") {
         const res = await optimizeCustomCopyMutation.mutateAsync({
@@ -555,12 +556,20 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
           }
           if(customNoteDetailLevel==='concise')assertKnowledgeCardIllustrationSelection(distilled, customNoteDistillModel);
         }
+        // 出图前准备链（2026-11-20）：每步开始即显示「第 x/7 步」，失败时说清哪一步、未扣费；以前各步无提示，大稿卡住像死机。
+        const enterPrepareStep = async (step: HandbookPrepareStep, detail?: string) => {
+          prepareStep = step;
+          setCustomNoteProgress({ status: "running", percent: 0, label: handbookPrepareStepLabel(step, detail) });
+          await new Promise<void>((r) => (typeof setTimeout === "function" ? setTimeout(r, 0) : r())); // 让出一帧，状态先画出来再做同步重活
+        };
+        await enterPrepareStep("规划分页");
         const plan = planKnowledgeCardPages(distilled, customNoteDistillModel);
         const pages = plan.pages.length ? plan.pages : [distilled];
         const total = pages.length;
         if(overrides?.supplementOf&&total>8)throw new Error("补充图卡实际分页超过8页，未提交生成");
         const qLabel = "4K";
-        const priceQuote = await trpcUtils.client.mvAnalysis.quoteKnowledgeCardForGeneration.mutate(await handbookQuoteInput(distilled, customNoteDistillModel));
+        await enterPrepareStep("上传大稿并报价");
+        const priceQuote = await trpcUtils.client.mvAnalysis.quoteKnowledgeCardForGeneration.mutate(await handbookQuoteInput(distilled, customNoteDistillModel, (a, b) => setCustomNoteProgress({ status: "running", percent: 0, label: handbookPrepareStepLabel("上传大稿并报价", `已上传 ${a}/${b} 段`) })));
         if (priceQuote.pageCount !== total) throw new Error("报价页数与当前稿件不一致，请重新确认");
         const credits = priceQuote.credits;
         /**
@@ -587,6 +596,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
         const sourceId = `knowledge-card:${crypto.randomUUID()}`;
         const fullMarkdown = pendingSnapshot.detailLevel === "full" ? distilled : completeManuscript || "";
         if (!fullMarkdown.trim()) throw new Error("缺少完整版文字底稿，请先恢复完整稿；尚未开始出图或整理");
+        await enterPrepareStep("核对稿件身份");
         const inputFingerprint = await knowledgeCardInputFingerprint(knowledgeCardInputKey({ owner: workbenchUserKey, text: distilled, full: fullMarkdown, level: pendingSnapshot.detailLevel, template: pendingSnapshot.infographicTemplateId, model: pendingSnapshot.distillModel }));
         const cardsOnly = (overrides?.cardsOnly ?? customNoteCardsOnly) === true && !overrides?.supplementOf;
         const { pageRequestIds, imageJobIds, illustrationRun, publicationQuote, textPageCount } = await (async () => {
@@ -595,6 +605,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
             for (let i = 0; i < pages.length; i++) pageRequestIds.push(knowledgeCardPageTasks.begin("platform_composite_sheet_progress"));
             const imageJobIds = await Promise.all(pageRequestIds.map(id => knowledgeIllustrationJobId(workbenchUserKey, id)));
             const illustrationRun = knowledgeIllustrationRun(imageJobIds);
+            await enterPrepareStep("整理配图章节");
             const synchronizedSource = synchronizedKnowledgeCardSource({
               owner: workbenchUserKey, sourceId, inputFingerprint, fullMarkdown, illustrationMarkdown: distilled,
               detailLevel: pendingSnapshot.detailLevel, distillModel: pendingSnapshot.distillModel,
@@ -605,7 +616,11 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
             const readingController = readingControllerRef.current;
             const readingPreparation = readingFullMarkdownRef.current === fullMarkdown.trim() ? readingController?.link() : undefined;
             if(readingPreparation && !overrides?.supplementOf) synchronizedSource.readingPreparation = readingPreparation;
+            const oversize = knowledgeLayoutSourceOversize(synchronizedSource);
+            if (oversize) throw new Error(oversize);
+            await enterPrepareStep("计算文字页数");
             const textPageCount = knowledgeCardPlannedTextPages(distilled, synchronizedSource, cardsOnly);
+            await enterPrepareStep("保存云端稿件并报价");
             const publicationQuote = await studio.prepare(synchronizedSource, illustrationRun.wait,overrides?.supplementOf,{waitForReading:readingPreparation?()=>readingController!.wait():undefined,preparePresentation:false,...(cardsOnly?{cardsOnly:true}:{})});
             return { pageRequestIds, imageJobIds, illustrationRun, publicationQuote, textPageCount };
           } catch (error) {
@@ -613,6 +628,8 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
             throw error;
           }
         })();
+        await enterPrepareStep("确认费用");
+        prepareStep = null;
         const continueGen = await askKnowledgeCardPreflight({
           levelZh: KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH[pendingSnapshot.detailLevel as keyof typeof KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH],
           layoutZh: KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[pendingSnapshot.subjectPosition as keyof typeof KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH],
@@ -762,7 +779,8 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
     } catch (e) {
       // 新批次函数（线 D）抛错时带分项计数：用户句只由计数拼成，不把底层原文交给脱敏（含引擎名/401 时会整句被替换、计数丢失）。
       const batchCounts = kind === "single_page_knowledge_card" ? knowledgeIllustrationBatchCounts(e) : null;
-      const msg = batchCounts ? knowledgeIllustrationBatchUserMessage(batchCounts) : mapCustomNoteError(e);
+      const failedStep = prepareStep as HandbookPrepareStep | null;
+      const msg = batchCounts ? knowledgeIllustrationBatchUserMessage(batchCounts) : failedStep ? handbookPrepareFailureMessage(failedStep, mapCustomNoteError(e)) : mapCustomNoteError(e);
       setCustomNoteError(msg);
       if (kind === "single_page_knowledge_card") {
         setCustomNoteProgress((prev: any) => ({ ...prev, status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
