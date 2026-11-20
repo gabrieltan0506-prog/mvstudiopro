@@ -50,6 +50,11 @@ export const editableLayoutRouter = router({
     const {loadKnowledgeBookLayoutProgress}=await import("../services/knowledgeBookLayoutProgress");
     return loadKnowledgeBookLayoutProgress(ctx.user.id,input.documentId,input.requestId);
   }),
+  /** 本稿出图之后各步骤发出过的模型请求数（只读清点回执对象名；不调模型、不扣费、不写对象）。 */
+  publicationCallStats: publicationProcedure.input(z.object({documentId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
+    const {loadKnowledgePublicationCallStats}=await import("../services/knowledgePublicationCallStats");
+    return loadKnowledgePublicationCallStats(ctx.user.id,input.documentId);
+  }),
   bookLayoutPreview: publicationProcedure.input(z.object({documentId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
     const {currentLayoutGeneration}=await import("../services/editableLayoutStore");
     const {loadKnowledgeBookLayoutView}=await import("../services/knowledgeBookLayout");
