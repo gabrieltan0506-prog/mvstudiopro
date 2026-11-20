@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import {knowledgeReviewFromMarkdown} from './knowledgeMarkdownReview';
 import {it,expect,vi} from 'vitest';
 import {verifyKnowledgeEditionManuscripts} from './knowledgeEditionFinalVerification';
@@ -79,4 +80,135 @@ it('实际检索无可用资料保留原文标待验证，只搜索不另购改�
  expect(invoke).toHaveBeenCalledTimes(1);expect(f.data.get('test/verified.json').complete).toBe(true);
  expect(f.data.get('test/verified.json').pendingVerification).toHaveLength(1);
  await verifyKnowledgeEditionManuscripts([source],f.evidence,invoke as any);expect(invoke).toHaveBeenCalledTimes(1);
+});
+
+it('读取已存核实章节遇到一次断线时原位重试，沿用旧结果且不发模型请求',async()=>{
+  const f=setup(), invoke=vi.fn();
+  const bodies=['已核实的正文。<!-- 待核：原章疑点 -->'];
+  const {createHash}=await import('node:crypto');
+  const digest=createHash('sha256').update(JSON.stringify(bodies)).digest('hex');
+  f.data.set('test/pages/0.json',{status:'saved',digest,body:'已保存正文'});
+  let reads=0;
+  const read=async(key:string)=>{
+    if(key==='test/pages/0.json' && ++reads===1)throw new TypeError('fetch failed');
+    return f.evidence.read(key);
+  };
+  const result=await verifyKnowledgeEditionManuscripts(bodies,{...f.evidence,read},invoke);
+  expect(result).toEqual(['已保存正文']);
+  expect(reads).toBe(2);
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it("云存储瞬态读错最多重试四次，嵌套检查不放大重试次数",async()=>{
+  const {guardKnowledgeEditionEvidence}=await import("./knowledgeEditionRecovery");
+  vi.useFakeTimers();
+  try {
+    for(const succeeds of [true,false]){
+      const start=Date.now();
+      const readTimes:number[]=[];
+      const evidence=guardKnowledgeEditionEvidence(guardKnowledgeEditionEvidence({...setup().evidence,read:async()=>{
+        readTimes.push(Date.now()-start);
+        if(readTimes.length===5 && succeeds)return {ok:true};
+        throw new TypeError("fetch failed");
+      }}));
+      const result=evidence.read("test");
+      const assertion=succeeds?expect(result).resolves.toEqual({ok:true}):expect(result).rejects.toThrow("章节检查点");
+      await vi.runAllTimersAsync();await assertion;
+      expect(readTimes).toEqual([0,3000,8000,23000,53000]);
+    }
+  }finally{vi.useRealTimers();}
+});
+
+it('915个乱序完成批次恢复时首报915，只对177个缺口检索，成稿按原章顺序',async()=>{
+  const f=setup();
+  const evidence={...f.evidence,listKeys:async(prefix:string)=>[...f.data.keys()].filter(k=>k.startsWith(prefix))};
+  const bodies=Array.from({length:1092},(_,i)=>`第${i}章。<!-- 待核：本章史料 -->`);
+  const digest=createHash('sha256').update(JSON.stringify(bodies)).digest('hex');
+  f.data.set('test/input.json',{digest,bodies});
+  const missing=new Set(Array.from({length:177},(_,i)=>i*6));
+  for(let i=0;i<bodies.length;i++)if(!missing.has(i)){
+    f.data.set(`test/completed/${digest}/${i}.json`,{status:'saved',pageIndex:i,digest,body:`已保存第${i}章`});
+  }
+  const invoked:number[]=[];
+  const invoke=vi.fn(async(_req:any,scope:any)=>{
+    invoked.push(Number(scope.prefix.split('search-').pop()));
+    return {status:200,text:JSON.stringify({candidates:[{content:{parts:[{text:JSON.stringify({evidenceState:'missing',sources:[]})}]}}]})};
+  });
+  const progress=vi.fn();
+  const result=await verifyKnowledgeEditionManuscripts(bodies,evidence,invoke as any,progress);
+  expect(progress.mock.calls[0][0]).toEqual({doneBatches:915,totalBatches:1092,pass:3});
+  expect(invoked.sort((a,b)=>a-b)).toEqual([...missing]);
+  expect(result).toHaveLength(1092);
+  for(let i=0;i<bodies.length;i++)expect(result[i]).toContain(missing.has(i)?`第${i}章`:`已保存第${i}章`);
+  expect(await evidence.listKeys(`test/completed/${digest}/`)).toHaveLength(1092);
+});
+
+it('旧单只迁移已保存的回执，中断后直接从已建清单恢复',async()=>{
+  const f=setup();
+  const bodies=['旧章。<!-- 待核：旧史料 -->'];
+  const digest=createHash('sha256').update(JSON.stringify(bodies)).digest('hex');
+  f.data.set('test/input.json',{digest,bodies});
+  f.data.set('test/pages/0.json',{digest,status:'saved',body:'旧核实正文'});
+  let interrupt=true;
+  const evidence={...f.evidence,listKeys:async(prefix:string)=>[...f.data.keys()].filter(k=>k.startsWith(prefix)),
+    save:async(key:string,value:unknown)=>{
+      if(key==='test/verified.json'&&interrupt)throw Error('测试中断');
+      await f.evidence.save(key,value);
+    }};
+  const invoke=vi.fn(),progress=vi.fn();
+  await expect(verifyKnowledgeEditionManuscripts(bodies,evidence,invoke)).rejects.toThrow('章节检查点');
+  interrupt=false;
+  f.data.delete('test/pages/0.json');
+  expect(await verifyKnowledgeEditionManuscripts(bodies,evidence,invoke,progress)).toEqual(['旧核实正文']);
+  expect(progress.mock.calls[0][0].doneBatches).toBe(1);
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it('完成清单暂时读不到时停止，不把清单当空重派',async()=>{
+  const f=setup(),invoke=vi.fn(),bodies=['正文。<!-- 待核：资料 -->'];
+  const digest=createHash('sha256').update(JSON.stringify(bodies)).digest('hex');
+  f.data.set('test/input.json',{digest,bodies});
+  const evidence={...f.evidence,listKeys:async()=>{throw Error('gcs_list_failed:503');}};
+  await expect(verifyKnowledgeEditionManuscripts(bodies,evidence,invoke)).rejects.toThrow('章节检查点');
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it("核实任务只对检查点网络故障安排四次原单重试",async()=>{
+  const {guardKnowledgeEditionEvidence, isTransientEditionCheckpointError, editionCheckpointRequeueDelay}=await import("./knowledgeEditionRecovery");
+  for(const [message,expected] of [["gcs_upload_failed:503:busy",true],["gcs_upload_failed:403:denied",false]] as const){
+    const evidence=guardKnowledgeEditionEvidence({...setup().evidence,save:async()=>{throw Error(message);}});
+    vi.useFakeTimers();
+    let err;
+    try {
+      const result=evidence.save("test",{}).catch(e=>e);
+      await vi.runAllTimersAsync();err=await result;
+    }finally{vi.useRealTimers();}
+    expect(isTransientEditionCheckpointError(err)).toBe(expected);
+  }
+  expect([1,2,3,4,5].map(editionCheckpointRequeueDelay)).toEqual([3000,5000,15000,30000,undefined]);
+});
+
+it("待发送回执写入断线：四次延迟重写同一对象，只在保存成功后派发一次",async()=>{
+  const {guardKnowledgeEditionEvidence}=await import("./knowledgeEditionRecovery");
+  const request={state:"pending",requestDigest:"test-digest"};
+  const upstream=vi.fn();
+  const saved=new Map<string,unknown>();
+  const writes:{key:string;value:unknown;ms:number}[]=[];
+  vi.useFakeTimers();
+  try {
+    const start=Date.now();
+    const evidence=guardKnowledgeEditionEvidence(guardKnowledgeEditionEvidence({...setup().evidence,
+      save:async(key,value)=>{
+        writes.push({key,value,ms:Date.now()-start});
+        saved.set(key,value);
+        if(writes.length<5)throw new TypeError("fetch failed");
+      }}));
+    const send=evidence.save("search/test.pending.json",request).then(upstream);
+    await vi.advanceTimersByTimeAsync(52999);
+    expect(upstream).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);await send;
+    expect(writes.map(w=>w.ms)).toEqual([0,3000,8000,23000,53000]);
+    expect(writes.every(w=>w.key==="search/test.pending.json" && w.value===request)).toBe(true);
+    expect(saved.size).toBe(1);expect(upstream).toHaveBeenCalledTimes(1);
+  }finally{vi.useRealTimers();}
 });

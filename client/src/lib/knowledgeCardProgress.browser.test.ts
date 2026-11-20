@@ -33,8 +33,9 @@ async function render(state: unknown) {
   const text = await page.evaluate(() => document.body.innerText);
   const now = await page.evaluate(() => document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow"));
   const role = await page.evaluate(() => document.querySelector('[aria-label="知识卡进度"] p')?.getAttribute("role"));
+  const stage = await page.evaluate(() => document.querySelector('[aria-label="当前阶段进度"]')?.getAttribute("aria-valuenow"));
   await page.close();
-  return { text, now, role };
+  return { text, now, role, stage };
 }
 
 describe("KnowledgeCardProgress（真实浏览器）", () => {
@@ -62,16 +63,18 @@ describe("KnowledgeCardProgress（真实浏览器）", () => {
   });
   it("总体权重与当前阶段计数分列显示", async () => {
     const r = await render({ status: "running", percent: 73, label: "联网核实与修订", stageDone: 3, stageTotal: 18 });
-    expect(r.text).toContain("总体完成度");
+    expect(r.text).toContain("总体进度");
     expect(r.text).toContain("当前阶段");
     expect(r.text).toContain("73%");
     expect(r.text).toContain("3/18 · 16.7%");
     expect(r.now).toBe("73");
+    expect(r.stage).toBe("16.7");
   });
   it("缺少计数时不借总体百分比伪造阶段进度", async () => {
     const r = await render({ status: "running", percent: 90, label: "统稿合并…" });
     expect(r.text).toContain("暂无阶段计数");
     expect(r.text).not.toContain("undefined");
+    expect(r.stage).toBeNull();
   });
   it("旧任务阶段切换不读取残留的参考页计数", () => {
     const saved = { distillStageDone: 21, distillStageTotal: 21, distillDoneChunks: 2, distillTotalChunks: 6 };

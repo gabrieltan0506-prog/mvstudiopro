@@ -1,3 +1,4 @@
+import {KnowledgeEditionPersistenceError} from './knowledgeEditionRecovery';
 import { KNOWLEDGE_MODEL_CHANNEL_MAX, knowledgeStageConcurrency, type KnowledgeRateGate } from "../../shared/knowledgeConcurrency";
 import {knowledgeSupplementRefinementFromMarkdown} from '../../shared/knowledgeSupplementRefinement';
 import { knowledgeVerificationSourceEvidence } from './knowledgeVerificationPolicy';
@@ -47,6 +48,7 @@ export type KnowledgeModelRequest = {
   generationConfig: { temperature: number; maxOutputTokens: number; responseMimeType: string };
 };
 export type KnowledgeRouteEvidence = {
+  listKeys?: (prefix: string) => Promise<string[]>;
   prefix: string;
   read: (key: string) => Promise<any>;
   save: (key: string, data: unknown) => Promise<void>;
@@ -911,6 +913,7 @@ export async function invokeKnowledgePublicationRoutes(
         const purchaseStartedAt = new Date().toISOString();
         try { await evidence.save(key, { requestDigest, route, model, state: "pending", startedAt: purchaseStartedAt, request: storedBody, imageSources: images, ...degraded }); }
         catch (error) { releaseGate(); throw error; }
+        if (deps.signal?.aborted) { releaseGate(); cancelled(); }
         attempts[routeModelFamily(model)][channel]+=1;
         let status: number | undefined;
         let archivedInterruption = false;
@@ -965,6 +968,10 @@ export async function invokeKnowledgePublicationRoutes(
             releaseGate();
           await evidence.save(key, receipt);
         } catch (transportError) {
+          if (transportError instanceof KnowledgeEditionPersistenceError) {
+            releaseGate();
+            throw transportError;
+          }
           // 无心跳（等响应头或读正文连续无字节）= 可能被上游排队/放慢：本通道本任务并发减半，再按断流规矩处理。
           const noHeartbeat = headerIdle || keepaliveOnly || /秒无数据|正文失联/.test(transportError instanceof Error ? transportError.message : "");
           gateOutcome = noHeartbeat ? "rate_limited" : "error";
@@ -1064,6 +1071,7 @@ export async function invokeKnowledgePublicationRoutes(
         await evidence.save(key, receipt);
       }
     } catch (error) {
+      if (error instanceof KnowledgeEditionPersistenceError) throw error;
       if (error instanceof KnowledgeBudgetOverflowError) {
         // 完整回答但篇幅超出：按写坏记失败（原始回包保留），切下一跳；保留超出最少的一份作压缩兜底。
         traces.pop(); traces.push({ route, model, state: "budget_overflow", status: 200 });
@@ -1143,6 +1151,7 @@ export async function invokeKnowledgePublicationRoutes(
         checked = JSON.parse(out.candidates[0].content.parts[0].text);
         researchMeta = {status:"succeeded",model:out.modelVersion,gateway:out.gateway,usage:out.usageMetadata,traces:out.gatewayTrace,validation:checked!.validation};
       } catch (error) {
+        if (error instanceof KnowledgeEditionPersistenceError) throw error;
         // 后置搜索只允许原回执恢复；未知结果不触发新搜索或正文回退。
         researchMeta = {status:error instanceof KnowledgeRoutesExhaustedError ? "failed" : "pending",message:error instanceof Error?error.message:"检索未闭合"};
       }

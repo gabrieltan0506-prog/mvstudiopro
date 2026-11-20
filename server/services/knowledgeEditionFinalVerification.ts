@@ -32,22 +32,43 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
  const result:string[]=new Array(bodies.length),verifications:unknown[]=new Array(bodies.length);
  const pageIssues:KnowledgeEditionIssue[][]=bodies.map(()=>[]);
  const pagePending:{pageIndex:number;message:string}[][]=bodies.map(()=>[]);
- let done=0;
+ // 完成目录只存已落盘的结果。对象名即批次清单，并发写不同编号无需覆盖共享文件。
+ const completedPrefix=`${evidence.prefix}/completed/${digest}/`;
+ const indexed=new Set<number>();
+ if(manifest && evidence.listKeys){
+   for(const key of await evidence.listKeys(completedPrefix)){
+     const name=key.slice(completedPrefix.length);
+     const index=Number(name.split('.')[0]);
+     if(!key.startsWith(completedPrefix)||!Number.isSafeInteger(index)||index<0||index>=bodies.length||name!==`${index}.json`)
+       throw Error('已完成批次清单与原稿不符');
+     indexed.add(index);
+   }
+ }
+ let done=Array.from(indexed).filter(i=>required[i]).length;
  let progress=Promise.resolve();
  const completed=async()=>{
   const count=++done;
   progress=progress.then(async()=>{await onProgress?.({doneBatches:count,totalBatches:total,pass:3});});
   await progress;
  };
- if(total)await onProgress?.({doneBatches:0,totalBatches:total,pass:3});
+ if(total)await onProgress?.({doneBatches:done,totalBatches:total,pass:3});
  const processPage=async(i:number,channel:'openrouter'|'evolink')=>{
   // 原页在任何请求之前保存，已经完成的页在恢复时零调用复用。
   const pageKey=`${evidence.prefix}/pages/${i}.json`;
-  const checkpoint=await evidence.read(pageKey);
+  const completedKey=evidence.listKeys ? `${completedPrefix}${i}.json` : pageKey;
+  const alreadyIndexed=indexed.has(i);
+  const checkpoint=alreadyIndexed ? await evidence.read(completedKey)
+    : (manifest || !evidence.listKeys) ? await evidence.read(pageKey) : null;
+  if(alreadyIndexed && (checkpoint?.status!=='saved'||checkpoint.pageIndex!==i||typeof checkpoint.body!=='string'))
+    throw Error('已完成批次回执缺失或损坏，保留原任务');
+
   if(checkpoint&&checkpoint.digest!==digest)throw Error('章节输入变化，保留原回执');
   if(checkpoint?.status==='saved'){
    result[i]=checkpoint.body;verifications[i]=checkpoint.verification||null;pageIssues[i]=checkpoint.issues||[];pagePending[i]=checkpoint.pendingVerification||[];
-   if(required[i])await completed();
+   if(!alreadyIndexed){
+     if(evidence.listKeys)await evidence.save(completedKey,{...checkpoint,pageIndex:i});
+     if(required[i])await completed();
+   }
    return;
   }
   await evidence.save(pageKey,{digest,pageIndex:i,original:bodies[i],body:bodies[i],status:'pending'});
@@ -141,7 +162,7 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
   if(knowledgeVerificationTriggers([{pageId:`section-${i}`,headline:'疑点',term:'正文',statement:body}]).length&&!localIssues.length&&!localPending.length)
    localIssues.push({pageIndex:i,kind:'unresolved',message:'仍有待核疑点，原文及回执保留'});
   // 同页原文与结果一起落盘；失败不会回滚之前已保存页。
-  await evidence.save(pageKey,{digest,pageIndex:i,original:bodies[i],body,status:'saved',verification,issues:localIssues,pendingVerification:localPending});
+  await evidence.save(completedKey,{digest,pageIndex:i,original:bodies[i],body,status:'saved',verification,issues:localIssues,pendingVerification:localPending});
   result[i]=body;verifications[i]=verification;pageIssues[i]=localIssues;pagePending[i]=localPending;
   if(required[i])await completed();
  };
@@ -152,6 +173,8 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
  // 首个待核页从 EvoLink 起（GLM@EvoLink 首发），其后两通道交替；各页仍可经路由回落到另一通道与 DeepSeek。
  const work=(['evolink','openrouter'] as const).flatMap((channel,routeIndex)=>{
   const indices=bodies.map((_,i)=>i).filter(i=>routeByPage[i]===routeIndex);
+  // 先补缺项；已完成的批次只为最终合稿取正文，不计进度、不经过模型。
+  indices.sort((a,b)=>Number(indexed.has(a))-Number(indexed.has(b)));
   let next=0;
   return Array.from({length:knowledgeStageConcurrency(indices.length,{max:KNOWLEDGE_MODEL_CHANNEL_MAX[channel]})},async()=>{
    while(!stopped&&next<indices.length){

@@ -1,15 +1,65 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { KnowledgeCardProgress, knowledgeCardStageCounts, type KnowledgeCardProgressState } from "./KnowledgeCardProgress";
+import { pollJobUntilTerminal } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../../server/routers";
 export type RecoveredKnowledgeCard = inferRouterOutputs<AppRouter>["mvAnalysis"]["getKnowledgeCardRecovery"];
 type Listing = inferRouterOutputs<AppRouter>["mvAnalysis"]["listKnowledgeCardRecovery"];
 export function KnowledgeCardRecovery({disabled,onApply}:{disabled:boolean;onApply:(value:RecoveredKnowledgeCard)=>boolean}) {
+  const resume=trpc.mvAnalysis.resumeLastKnowledgeVerification.useMutation();
+  const [watchVersion,setWatchVersion]=useState(0);
   const remove=trpc.mvAnalysis.deleteKnowledgeCardRecovery.useMutation();
   const utils=trpc.useUtils();const [open,setOpen]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const [items,setItems]=useState<Listing["items"]>([]),[cursor,setCursor]=useState<Listing["nextCursor"]>(null);
   const [candidate,setCandidate]=useState<RecoveredKnowledgeCard|null>(null);
-  async function load(more=false) {setBusy(true);setError("");try{const r=await utils.mvAnalysis.listKnowledgeCardRecovery.fetch({cursor:more?cursor??undefined:undefined});setItems(old=>Array.from(new Map([...(more?old:[]),...r.items].map(x=>[x.key,x])).values()));setCursor(r.nextCursor);}catch(e){setError(e instanceof Error?e.message:"读取失败，请重试");}finally{setBusy(false);}}
+  const [watchInput,setWatchInput]=useState("");
+  const [watched,setWatched]=useState("");
+  const [watchProgress,setWatchProgress]=useState<KnowledgeCardProgressState>({status:"idle",percent:0});
+  const [watchStatus,setWatchStatus]=useState("");
+  useEffect(()=>{
+    if(!open || !watched) return;
+    const controller=new AbortController();
+    setWatchProgress({status:"idle",percent:0});
+    setWatchStatus("正在读取原任务…");
+    void pollJobUntilTerminal(watched,{
+      signal:controller.signal, intervalMs:5000, maxWaitMs:Number.MAX_SAFE_INTEGER,
+      onPoll:({status,output})=>{
+        if(controller.signal.aborted)return;
+        const stages:Record<string,string>={verifying:"联网核实与修订",merging:"汇总知识与疑点",deriving:"整理稿件",revising:"保存核实结果",finishing:"保存成稿"};
+        const stage=stages[String(output?.distillStage)] || "处理中";
+        if(status==="running"){
+          setWatchStatus("");
+          setWatchProgress({status:"running",percent:Number(output?.distillPercent)||0,label:stage,...knowledgeCardStageCounts(output||{})});
+        }else if(status==="queued"){
+          setWatchStatus("等待后台领取");setWatchProgress({status:"idle",percent:0});
+        }
+      },
+    }).then(job=>{
+      if(controller.signal.aborted)return;
+      setWatchProgress(previous=>({...previous,status:job.status==="succeeded"?"succeeded":"failed"}));
+      if(job.status==="succeeded"){
+        setWatchStatus("核实完成，正在读取正文备份…");
+        void utils.mvAnalysis.getKnowledgeCardRecovery.fetch({jobId:watched},{staleTime:0}).then(value=>{
+          if(controller.signal.aborted)return;
+          setCandidate(value);
+          setWatchStatus("核实完成，请核对预览后恢复正文。");
+        }).catch(()=>{if(!controller.signal.aborted)setWatchStatus("核实完成，可从备份列表找回正文。");});
+      }else setWatchStatus(job.error || "任务失败");
+    }).catch(()=>{
+      if(!controller.signal.aborted)setWatchStatus("暂时无法读取，请核对账号与编号后重新查看。");
+    });
+    return ()=>controller.abort();
+  },[open,watched,watchVersion,utils]);
+  async function resumeLast(){
+    setBusy(true);setOpen(true);setError("");setCandidate(null);
+    try {
+      const {jobId}=await resume.mutateAsync();
+      setWatchInput(jobId);setWatched(jobId);setWatchVersion(v=>v+1);
+    }catch(e){setError(e instanceof Error?e.message:"无法续作，请稍后重试");}
+    finally{setBusy(false);}
+  }
+  async function load(more=false) {setBusy(true);setError("");try{const r=await utils.mvAnalysis.listKnowledgeCardRecovery.fetch({cursor:more?cursor??undefined:undefined},{staleTime:0});setItems(old=>Array.from(new Map([...(more?old:[]),...r.items].map(x=>[x.key,x])).values()));setCursor(r.nextCursor);}catch(e){setError(e instanceof Error?e.message:"读取失败，请重试");}finally{setBusy(false);}}
   async function select(jobId:string){setBusy(true);setError("");setCandidate(null);try{setCandidate(await utils.mvAnalysis.getKnowledgeCardRecovery.fetch({jobId},{staleTime:0}));}catch(e){setError(e instanceof Error?e.message:"读取失败，请重试");}finally{setBusy(false);}}
   async function deleteBackup(item:Listing["items"][number]){
     if(busy||disabled||!window.confirm(`删除“${item.title}”的云端恢复备份？删除后不能再从这里恢复；已生成图片、当前稿件及计费记录保留。`))return;
@@ -20,8 +70,16 @@ export function KnowledgeCardRecovery({disabled,onApply}:{disabled:boolean;onApp
   }
   return <div className="contents text-sm" data-knowledge-card-recovery>
     <button type="button" disabled={disabled||busy} aria-expanded={open} className="inline-flex items-center rounded-full border border-cyan-300/40 px-5 py-2.5 text-sm font-semibold text-cyan-100 disabled:opacity-50" onClick={()=>{setOpen(!open);if(!open)void load();}}>恢复上次内容</button>
+    <button type="button" disabled={disabled||busy} className="rounded-full border border-cyan-300/40 px-5 py-2.5 text-cyan-100 disabled:opacity-50" onClick={()=>void resumeLast()}>从上次任务续作</button>
     {open&&<div className="order-last basis-full min-w-0 space-y-3 rounded-xl border border-white/15 bg-black/25 p-4">
       <p className="text-xs text-white/60">选择已完成的正文或图文成品。恢复不会重新生成或扣费。</p>
+      <label className="block">后台核实任务编号
+        <input className="ml-2 rounded border bg-transparent px-2" value={watchInput} disabled={Boolean(watched)} onChange={e=>setWatchInput(e.target.value.trim())} placeholder="kc_…" />
+      </label>
+      {watched?<button type="button" onClick={()=>{setWatched("");setWatchStatus("");}}>停止查看进度</button>:
+        <button type="button" disabled={!/^kc_[a-f0-9]{56}$/.test(watchInput)} onClick={()=>setWatched(watchInput)}>查看原任务进度</button>}
+      {watched&&<KnowledgeCardProgress state={watchProgress}/>}
+      {watched&&watchStatus&&<p role="status">{watchStatus}</p>}
       {error&&<p role="alert" className="text-rose-300">{error}</p>}
       {busy&&<p role="status">正在读取云端备份…</p>}
       {!busy&&!items.length&&!error&&<p>暂无已完成的云端备份。</p>}

@@ -67,10 +67,7 @@ export function KnowledgeCardProgress({
   return (
     <div className="mt-3 space-y-1.5 text-sm" aria-label="知识卡进度">
       <p role={failed ? "alert" : "status"} className={`flex flex-wrap items-center gap-2 ${color}`}>
-        <span className="grid min-w-0 flex-1 grid-cols-2 gap-4">
-          <span className="min-w-0"><span className="block text-xs opacity-70">总体完成度</span><span className="font-semibold tabular-nums">{headline}</span></span>
-          <span className="min-w-0 break-words"><span className="block text-xs opacity-70">当前阶段</span><span className="block text-xs">{sanitizePlatformUserMessage(state.label || (succeeded ? "本步已结束" : "正在处理…"), "正在处理…")}</span><span className="block text-xs tabular-nums">{counted ? `${stageDone}/${stageTotal} · ${stagePercent}%` : "暂无阶段计数"}</span></span>
-        </span>
+        <span className="font-semibold tabular-nums">总体进度 · {headline}</span>
         {onCancel && state.status === "running" ? (
           <button
             type="button"
@@ -85,7 +82,7 @@ export function KnowledgeCardProgress({
       </p>
       <div
         role="progressbar"
-        aria-label="知识卡进度条"
+        aria-label="总体进度"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={shown}
@@ -93,6 +90,15 @@ export function KnowledgeCardProgress({
         className="h-1.5 overflow-hidden rounded-full bg-white/10"
       >
         <div className={`h-full rounded-full transition-[width] duration-300 ${fill}`} style={{ width: `${shown}%` }} />
+      </div>
+      <p className="flex flex-wrap items-baseline justify-between gap-x-3 pt-1 text-xs">
+        <span>当前阶段 · {sanitizePlatformUserMessage(state.label || (succeeded ? "本步已结束" : "正在处理…"), "正在处理…")}</span>
+        <span className="tabular-nums">{counted ? `${state.label?.includes(`${stageDone}/${stageTotal}`) ? "" : `${stageDone}/${stageTotal} · `}${stagePercent}%` : "暂无阶段计数"}</span>
+      </p>
+      <div role="progressbar" aria-label="当前阶段进度" aria-valuemin={0} aria-valuemax={100}
+        aria-valuenow={stagePercent} aria-valuetext={counted ? `${stageDone}/${stageTotal} · ${stagePercent}%` : "暂无阶段计数"}
+        className="h-1.5 overflow-hidden rounded-full bg-white/10">
+        {counted && <div className="h-full rounded-full bg-cyan-400 transition-[width] duration-300" style={{width:`${stagePercent}%`}} />}
       </div>
       {failed && state.error ? <p className="text-xs text-red-300/85">{sanitizePlatformUserMessage(state.error)}</p> : null}
       {stopped && state.error ? <p className="text-xs text-amber-200/85">{sanitizePlatformUserMessage(state.error)}</p> : null}
