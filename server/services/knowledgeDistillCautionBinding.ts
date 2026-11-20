@@ -84,11 +84,24 @@ export async function bindKnowledgeDistillCautions(page:Page,options:{evidence:K
  /** 读档任务共享的通道健康/并发闸/日志标签：某通道已判不可用（如余额不足 402）时直接从另一通道起步，不逐个先撞。 */
  routeOverrides?:Pick<NonNullable<Parameters<typeof invokeKnowledgePublicationRoutes>[2]>,'gates'|'channelHealth'|'logLabel'|'signal'>;
  /** 本请求思考档位；缺省按 knowledgeReasoningEffort('caution_binding')（high，env 可调）。不进入归属身份 digest。 */
- reasoningEffort?:KnowledgeReasoningEffort}) {
+ reasoningEffort?:KnowledgeReasoningEffort;
+ /**
+  * 归章去重（2026-11-20，仅 v2 提示词的新提炼）：一条疑点只挂一章，避免跨章疑点被复制到多章、末段重复计数与重复核实。
+  * 依次：证据原句所在章（多处原句取第一处）→ 程序归属 → 标题相似度最高且唯一的一章 → 现有模型归章（多章只取第一章）。
+  * 同文疑点去重。旧任务不传此项，已存绑定回执照旧回放、结果逐字不变。
+  */
+ singleTarget?:boolean;
+ /** 每页最多保留的疑点条数（按模型给出的重要性顺序）；仅随 singleTarget 的新提炼使用。 */
+ maxCautions?:number}) {
  options.abortSignal?.throwIfAborted();
  if(!page.reading)throw Error('提炼JSON缺少章节结构');
  const body=knowledgeReadingMarkdown(page.reading).replace(/^### /gm,'## ').replace(/^> (?!〔参考原页)/gm,'说明：');
- const cautions=page.cautions.filter(c=>c.kind==='uncertain');
+ let cautions=page.cautions.filter(c=>c.kind==='uncertain');
+ if(options.singleTarget){
+  const seen=new Set<string>();
+  cautions=cautions.filter(c=>{const k=`${c.evidence.trim()}\u0000${c.message.trim()}`;if(seen.has(k))return false;seen.add(k);return true;});
+ }
+ if(options.maxCautions!==undefined)cautions=cautions.slice(0,options.maxCautions);
  if(!cautions.length)return body;
  const chunks=body.split(/(?=^##[ \t]+)/m),chapters=chunks.map((text,index)=>({text,index,title:text.match(/^##[ \t]+([^\n]+)/)?.[1]})).filter(c=>c.title);
  if(!chapters.length)throw Error('疑点缺少可绑定的原章，保留原JSON');
@@ -97,6 +110,11 @@ export async function bindKnowledgeDistillCautions(page:Page,options:{evidence:K
   if(chapters.length===1)return [chapters[0].index];
   const quotes=Array.from(c.evidence.matchAll(/[「“]([^」”]+)[」”]/g),m=>clean(m[1])).filter(q=>q.length>=8);
   const matches=quotes.map(q=>chapters.filter(ch=>clean(ch.text).includes(q)));
+  if(options.singleTarget){
+   // 证据原句所在章：取第一处能唯一定位的原句（跨章矛盾也只挂在首个引用原句所在章）。
+   const first=matches.find(m=>m.length===1);
+   return first?[first[0].index]:[];
+  }
   return matches.length&&matches.every(m=>m.length===1)?Array.from(new Set(matches.map(m=>m[0].index))):[];
  });
  const identityOf=(missing:{index:number}[])=>({version:1,pageId:page.id,chapters:chapters.map(c=>({label:`章节${c.index}｜${c.title}`,body:c.text})),questions:missing.map(({index})=>({id:`疑点${index}`,evidence:cautions[index].evidence,message:cautions[index].message}))});
@@ -113,6 +131,12 @@ export async function bindKnowledgeDistillCautions(page:Page,options:{evidence:K
     const result=knowledgeCautionProgramBinding(chapters,cautions[index].evidence);
     programBindings.push({index,...result});
     if(result.targets.length)associations[index]=[...result.targets];
+    else if(options.singleTarget){
+     // 标题相似度：只比章节标题，取唯一最高且大于零的一章；并列或无相似交给模型。
+     const scores=knowledgeCautionSimilarityScores(chapters.map(c=>c.title||''),`${cautions[index].evidence}\n${cautions[index].message}`);
+     const top=Math.max(...scores);
+     if(top>0&&scores.filter(v=>v===top).length===1){associations[index]=[chapters[scores.indexOf(top)].index];programBindings[programBindings.length-1]={index,targets:[chapters[scores.indexOf(top)].index],method:'heading'};}
+    }
    }
   }
  }
@@ -218,6 +242,7 @@ export async function bindKnowledgeDistillCautions(page:Page,options:{evidence:K
    const target=block.type==='prose'?resolveChapter(block.title):undefined;
    const question=block.type==='prose'?resolveQuestion(block.text):undefined;
    if(!target||!question){skipped++;continue;}
+   if(options.singleTarget&&associations[question.index].length)continue;
    if(!associations[question.index].includes(target.index))associations[question.index].push(target.index);
   }
   }catch(error){
