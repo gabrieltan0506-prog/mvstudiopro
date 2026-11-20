@@ -79,3 +79,38 @@ export function knowledgeEditionErrorMessage(error: unknown) {
 export function isKnowledgeReceiptUnknown(error: unknown) {
   return /尚未闭合|未知回执|pending|unknown/i.test(knowledgeEditionErrorMessage(error));
 }
+
+/** 临时性存储/网络抖动（含包装后的检查点错误）：可原地重做同一步，不计入任何重试额度。 */
+export function isTransientKnowledgeStorageFault(error: unknown): boolean {
+  return transientStorageFault(error) || isTransientEditionCheckpointError(error);
+}
+/** 分段提炼原地重做同一步的等待（与检查点原地重试同一窗口，约 5.9 分钟，加抖动）。 */
+export function knowledgeInPlaceRetryDelaysMs(): readonly number[] {
+  return inPlaceRetryDelaysMs.map(jittered);
+}
+
+/**
+ * 分段提炼单批失败分类（1121 大书卡死）：
+ * - definite：三跳回落已明确失败（回执闭合、额度用尽/写坏/两次断流判失败/内容审核拒绝），可在新证据目录再试或减半；
+ * - transient：临时性存储/网络错误，原地重做同一步，不计次数；
+ * - hold：结果未知（未闭合回执）、取消、身份/版本不变量、无法识别的错误——一律原样上抛，不换目录、不重买。
+ */
+export type KnowledgeDistillFailureCategory = 'routes_exhausted' | 'invalid_output' | 'stream_interrupted' | 'content_safety';
+export function classifyKnowledgeDistillFailure(error: unknown):
+  | { kind: 'definite'; category: KnowledgeDistillFailureCategory }
+  | { kind: 'transient' }
+  | { kind: 'hold' } {
+  const e = error as { name?: unknown; code?: unknown; knowledgeDistillDefinite?: unknown } | null;
+  if (!error || e?.name === 'AbortError') return { kind: 'hold' };
+  if (isTransientKnowledgeStorageFault(error)) return { kind: 'transient' };
+  if (error instanceof KnowledgeEditionPersistenceError) return { kind: 'hold' };
+  // 回包内容已保存且确定不合格（由提炼层标注）：即使校验报「身份不一致」也是模型写坏，不是我方身份变化。
+  if (typeof e?.knowledgeDistillDefinite === 'string') return { kind: 'definite', category: e.knowledgeDistillDefinite as KnowledgeDistillFailureCategory };
+  const message = knowledgeEditionErrorMessage(error);
+  if (/版本变化|原稿变化|输入变化|身份不一致|身份变化|身份不符|不属于本人/.test(message)) return { kind: 'hold' };
+  if (e?.name === 'SseContentSafetyError' || e?.code === 'sse_content_safety') return { kind: 'definite', category: 'content_safety' };
+  if (/^图文整理的所有已配置通道均失败/.test(message)) return { kind: 'definite', category: 'routes_exhausted' };
+  if (/^传输中断已发生.*本章判失败/.test(message)) return { kind: 'definite', category: 'stream_interrupted' };
+  if (e?.name === 'KnowledgeJsonSyntaxError') return { kind: 'definite', category: 'invalid_output' };
+  return { kind: 'hold' };
+}

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { KNOWLEDGE_MODEL_CHANNEL_MAX, knowledgePooled, knowledgeStageConcurrency } from "../../shared/knowledgeConcurrency";
-import { knowledgeStructuredDistillContext, invokeKnowledgeStructuredDistill } from './knowledgeCardStructuredDistill';
+import { knowledgeStructuredDistillContext, invokeKnowledgeStructuredDistill, type KnowledgeDistillGap } from './knowledgeCardStructuredDistill';
 import { collectKnowledgeDistillDiagnostic, type KnowledgeDistillSegmentDiagnostic } from './knowledgeDistillDiagnostics';
 import { knowledgeChannelSkipped, knowledgeRouteKeepaliveOnlyTimeoutMs, knowledgeRouteIdleTimeoutMs } from './knowledgePublicationRoutes';
 import type { KnowledgeRouteEvidence } from './knowledgePublicationRoutes';
@@ -1874,10 +1874,16 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
           throw err;
         }
         const message = err instanceof Error ? err.message : String(err);
+        // 1121：本段经新目录重试与减半后仍失败，已记为缺口（原文位置与原因已落盘）：整本继续，不算未完成段、不让整本失败。
+        if (structured && (err as { knowledgeDistillGap?: unknown } | null)?.knowledgeDistillGap) {
+          console.warn(`[knowledgeCardDistill] 第 ${idx + 1}/${chunks.length} 段记为缺口，整本继续：${message.slice(0, 160)}`);
+          outputs[idx] = { ok: false, whereZh: `第 ${idx + 1}/${chunks.length} 段`, reasonZh: "未能提炼，已保留原文位置" };
+        } else {
         console.warn(`[knowledgeCardDistill] 第 ${idx + 1}/${chunks.length} 段未完成，其余段继续：${message.slice(0, 160)}`);
         structuredFailures.push({ index: idx, error: err });
         await recordStructuredDiagnostic(idx, err);
         outputs[idx] = { ok: false, whereZh: `第 ${idx + 1}/${chunks.length} 段`, reasonZh: message.slice(0, 120) };
+        }
       }
       if (knowledgeStructuredDistillContext.getStore()) {
         const ok = Boolean(outputs[idx]?.ok);
@@ -1927,6 +1933,8 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
     throw partial;
   }
 
+  // 1121：缺口逐条提醒（第 N 段未能提炼，已保留原文位置）；缺口记录本身随结果 distillGaps 透传。
+  for (const gap of [...(knowledgeStructuredDistillContext.getStore()?.distillGaps || [])].sort((a, b) => (a.segment ?? 0) - (b.segment ?? 0))) params.onNotice?.(gap.noticeZh);
   // 审查 P1：只有真正成功的段进正文；全失败＝本次没有稿子，按失败结算
   const failedChunks = outputs.filter((o): o is Extract<DistillChunkResult, { ok: false }> => !o?.ok);
   const successMarkdowns = outputs.filter((o): o is Extract<DistillChunkResult, { ok: true }> => Boolean(o?.ok)).map((o) => o.markdown);
@@ -1964,6 +1972,8 @@ export type PrepareKnowledgeCardCopyResult = {
   documents: Array<{ docKey: string; fileName: string; pageCount: number; selectedPages: number[] }>;
   /** EPUB 转好的 PDF 下载链接（0923 用户令） */
   convertedPdfs: KnowledgeCardConvertedPdf[];
+  /** 1121：分段提炼缺口（重试与减半后仍未能提炼的段/片，含原文位置与原因类别）；无缺口时不带此字段。 */
+  distillGaps?: KnowledgeDistillGap[];
 };
 
 /** 目录页扫读回包 */
@@ -2382,6 +2392,7 @@ export async function prepareKnowledgeCardCopy(input: {
     }
     // 交稿前最后一道：取消赢了就不交（复审 P1·B 的实测反例——signal 已 aborted 仍返回 11225 字）
     input.abortSignal?.throwIfAborted();
+    const distillGaps = knowledgeStructuredDistillContext.getStore()?.distillGaps;
     return {
       distilledMarkdown: distilled,
       skippedDistill: false,
@@ -2391,6 +2402,8 @@ export async function prepareKnowledgeCardCopy(input: {
       detailLevel,
       documents: documentsSummary,
       convertedPdfs: extracted.convertedPdfs ?? [],
+      // 1121：有缺口才带（无缺口结果结构逐字不变）；runner 已按 distillGaps 原样透传进任务 output。
+      ...(distillGaps?.length ? { distillGaps: [...distillGaps].sort((a, b) => (a.segment ?? 0) - (b.segment ?? 0)) } : {}),
     };
   } catch (err) {
     // 用户终止：原样上抛，别被下面的兜底改写成「算力紧张」——

@@ -165,18 +165,19 @@ it('P1-1 情形B：A/B 同时开跑、交错写续做租约 → 每段只有一�
 });
 
 it('P3-2 旧任务已结束且留下确定性校验失败的完整回包 → 新任务在自己目录重做该段（不永久零调用失败）', async () => {
-  const b = versionedBucket(); let bad = true;
+  // 1121：同任务内写坏的回包先在新证据目录重试一轮；本用例让原目录与新目录都写坏（短原文不再减半）→ 记缺口。
+  const b = versionedBucket(); let bad = 2;
   const invoke = vi.fn(async (request: any) => {
-    const r = report(request); if (!bad) return r; bad = false;
+    const r = report(request); if (!bad) return r; bad -= 1;
     const env = JSON.parse(r.text), rep = JSON.parse(env.candidates[0].content.parts[0].text);
     rep.pages[0].id = '00000000-0000-4000-8000-000000000000'; env.candidates[0].content.parts[0].text = JSON.stringify(rep);
     return { status: 200, text: JSON.stringify(env) };
   });
   const ctx = (job: string) => ({ evidence: b.store(`knowledge-card-distill/user-7/${job}`), resume: b.store('knowledge-card-distill/user-7/resume'), invoke: invoke as any, jobId: job, jobActive: async () => false });
   const run = (job: string) => knowledgeStructuredDistillContext.run(ctx(job), () => invokeKnowledgeStructuredDistill(params('短原文一段。')));
-  await expect(run('job-a')).rejects.toThrow(); expect(invoke).toHaveBeenCalledTimes(1);
-  await expect(run('job-a')).rejects.toThrow(); expect(invoke).toHaveBeenCalledTimes(1); // 同一任务恢复：照旧不重买
-  expect(await run('job-b')).toContain('明确的知识说明'); expect(invoke).toHaveBeenCalledTimes(2);
+  await expect(run('job-a')).rejects.toThrow(); expect(invoke).toHaveBeenCalledTimes(2);
+  await expect(run('job-a')).rejects.toThrow(); expect(invoke).toHaveBeenCalledTimes(2); // 同一任务恢复：缺口零调用回放，不再买
+  expect(await run('job-b')).toContain('明确的知识说明'); expect(invoke).toHaveBeenCalledTimes(3);
   expect(Array.from(b.data.keys()).some(k => k.startsWith('knowledge-card-distill/user-7/job-b/') && k.endsWith('/raw.json'))).toBe(true);
 });
 
