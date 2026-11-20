@@ -9,6 +9,7 @@ import {
   type OpenAiImageVariant,
 } from "../../shared/openaiImageVariant.js";
 import { SubmitUnknownError } from "./submitOutcomeErrors.js";
+import { createHash } from "node:crypto";
 
 function appendImageFlowLog(log: string[] | undefined, message: string): void {
   if (!log) return;
@@ -103,6 +104,77 @@ function sniffBinaryImageMime(buffer: Buffer): "image/png" | "image/jpeg" {
     return "image/jpeg";
   }
   return "image/png";
+}
+
+/**
+ * 落盘/上云图片的指纹（D4 2026-11-19）：上传时内存里已有原图字节，就地算一次 SHA-256 与宽高，
+ * 后续环节不必再下载 4K 原图来求哈希。job 输出中的字段 `compositeImageFacts` 为可选新字段：旧输出没有它，读者一律回退原逻辑。
+ */
+export type PlatformStoredImageFacts = {
+  version: 1;
+  sha256: string;
+  bytes: number;
+  mimeType: "image/png" | "image/jpeg";
+  width?: number;
+  height?: number;
+};
+
+/** 只读文件头：PNG 取 IHDR，JPEG 扫描 SOFn；无法识别返回 undefined（不猜）。 */
+export function platformImageDimensions(buffer: Buffer): { width: number; height: number } | undefined {
+  if (buffer.length >= 24 && buffer.readUInt32BE(0) === 0x89504e47 && buffer.toString("ascii", 12, 16) === "IHDR") {
+    const width = buffer.readUInt32BE(16), height = buffer.readUInt32BE(20);
+    return width > 0 && height > 0 ? { width, height } : undefined;
+  }
+  if (buffer.length >= 4 && buffer[0] === 0xff && buffer[1] === 0xd8) {
+    let offset = 2;
+    while (offset + 4 <= buffer.length) {
+      if (buffer[offset] !== 0xff) return undefined;
+      const marker = buffer[offset + 1]!;
+      if (marker === 0xff) { offset += 1; continue; }
+      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { offset += 2; continue; }
+      if (marker === 0xd9 || marker === 0xda) return undefined;
+      const length = buffer.readUInt16BE(offset + 2);
+      if (length < 2) return undefined;
+      const sof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+      if (sof) {
+        if (offset + 9 > buffer.length) return undefined;
+        const height = buffer.readUInt16BE(offset + 5), width = buffer.readUInt16BE(offset + 7);
+        return width > 0 && height > 0 ? { width, height } : undefined;
+      }
+      offset += 2 + length;
+    }
+  }
+  return undefined;
+}
+
+export function computePlatformStoredImageFacts(buffer: Buffer): PlatformStoredImageFacts {
+  const size = platformImageDimensions(buffer);
+  return { version: 1, sha256: createHash("sha256").update(buffer).digest("hex"), bytes: buffer.length, mimeType: sniffBinaryImageMime(buffer), ...(size || {}) };
+}
+
+/** 本进程内「刚上传的 URL → 指纹」登记：写 job 输出的调用方用 takePlatformStoredImageFacts 取走。有界，最旧先淘汰。 */
+const STORED_IMAGE_FACTS = new Map<string, PlatformStoredImageFacts>();
+const STORED_IMAGE_FACTS_MAX = 512;
+function rememberPlatformStoredImageFacts(url: string, facts: PlatformStoredImageFacts) {
+  STORED_IMAGE_FACTS.delete(url);
+  STORED_IMAGE_FACTS.set(url, facts);
+  while (STORED_IMAGE_FACTS.size > STORED_IMAGE_FACTS_MAX) STORED_IMAGE_FACTS.delete(STORED_IMAGE_FACTS.keys().next().value!);
+}
+/** 取走某个刚上传 URL 的指纹（一次性）；不是本进程上传的或已淘汰则返回 undefined，调用方不写该字段。 */
+export function takePlatformStoredImageFacts(url: string | null | undefined): PlatformStoredImageFacts | undefined {
+  const key = String(url || "");
+  const facts = STORED_IMAGE_FACTS.get(key);
+  if (facts) STORED_IMAGE_FACTS.delete(key);
+  return facts;
+}
+/** 读 job 输出中的指纹：旧输出（无字段）或形状不合格一律返回 undefined，读者回退原有下载求哈希逻辑。 */
+export function readPlatformStoredImageFacts(output: unknown): PlatformStoredImageFacts | undefined {
+  const facts = (output as { compositeImageFacts?: unknown } | null | undefined)?.compositeImageFacts as Partial<PlatformStoredImageFacts> | undefined;
+  if (!facts || facts.version !== 1 || typeof facts.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(facts.sha256)) return undefined;
+  if (!Number.isInteger(facts.bytes) || Number(facts.bytes) <= 0 || (facts.mimeType !== "image/png" && facts.mimeType !== "image/jpeg")) return undefined;
+  const dim = (v: unknown) => Number.isInteger(v) && Number(v) > 0;
+  const sized = dim(facts.width) && dim(facts.height);
+  return { version: 1, sha256: facts.sha256, bytes: Number(facts.bytes), mimeType: facts.mimeType, ...(sized ? { width: Number(facts.width), height: Number(facts.height) } : {}) };
 }
 
 function resolveEvolinkSize(aspectRatio: EvolinkImageAspectRatio, explicitSize?: string): string {
@@ -214,6 +286,8 @@ export async function uploadBufferToPlatformStorage(
   const mime = sniffBinaryImageMime(buffer);
   const ext = mime === "image/jpeg" ? "jpg" : "png";
   const driver = resolvePlatformImageStorageDriver();
+  // 字节在手时算一次指纹；只登记成功上传的 URL（上传失败不留登记）。
+  const facts = computePlatformStoredImageFacts(buffer);
 
   if (driver === "fly") {
     const { writeFlyPlatformImageBuffer, buildFlyPlatformImagePublicUrl } = await import(
@@ -227,6 +301,7 @@ export async function uploadBufferToPlatformStorage(
     });
     const flyUrl = buildFlyPlatformImagePublicUrl(relPath);
     appendImageFlowLog(flowLog, `[GPT-IMAGE-2·EvoLink] 已写入 Fly 卷 · relPath=${relPath}`);
+    rememberPlatformStoredImageFacts(flyUrl, facts);
     return flyUrl;
   }
 
@@ -234,6 +309,7 @@ export async function uploadBufferToPlatformStorage(
   const { gcsUri } = await uploadBufferToGcs({ objectName: path, buffer, contentType: mime });
   const signedUrl = await signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
   appendImageFlowLog(flowLog, `[GPT-IMAGE-2·EvoLink] 已上传 GCS · gcsUri=${gcsUri}`);
+  rememberPlatformStoredImageFacts(signedUrl, facts);
   return signedUrl;
 }
 

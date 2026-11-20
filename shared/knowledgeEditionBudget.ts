@@ -238,7 +238,7 @@ export function knowledgeCompressionInstructions(level: KnowledgeEditionLevel, o
 
 /**
  * 统稿后「哪些章要压缩」的标记（站长 2026-11-13：不必每章都压缩；放宽为一章可占两页，但两页的留白不得超过四分之一页；
- * 需要压缩的章先标记好，再分两路并发）。只用于新合同完整版的整册补压；审校阶段的建议字数不变。
+ * 需要压缩的章先标记好，再分四路并发（两通道各两路））。只用于新合同完整版的整册补压；审校阶段的建议字数不变。
  * - 一页容量：带表格的章按 KNOWLEDGE_LEAD_PAGE_CHARS（700，实测带 5 行表格约 700–730）；
  *   纯段落的章按 KNOWLEDGE_LEAD_PROSE_PAGE_CHARS（实测满幅图下约 1130 字，留一成余量）。字数略超时版式会先等比例缩图收进同页。
  * - 两页容量：一页容量 + 一整页续页 KNOWLEDGE_READING_PAGE_CHARS；两页留白 ≤ 1/4 页 ⇒ 字数不少于「一页容量 + 续页 × 3/4」。

@@ -24,9 +24,10 @@ export type KnowledgeLayoutPageMeasure = {
 };
 export type KnowledgeLayoutIssueKind = "overflow" | "clipped" | "occluded" | "whitespace" | "page_number" | "image_missing" | "spread_unpaired" | "image_cropped" | "image_too_small";
 export type KnowledgeLayoutIssue = { page: number; kind: KnowledgeLayoutIssueKind; target: string };
-export const KNOWLEDGE_LAYOUT_MAX_WHITESPACE = 1 / 3;
+/** 每页补白后仍空着的版心比例上限（站长 2026-11-13：一章可占两页，但留白不得超过四分之一页；原为 1/3）。恰好等于上限算通过。只作提示，不拦截下载。 */
+export const KNOWLEDGE_LAYOUT_MAX_WHITESPACE = 1 / 4;
 export const KNOWLEDGE_LAYOUT_ISSUE_LABEL: Record<KnowledgeLayoutIssueKind, string> = {
-  overflow: "文字溢出", clipped: "标题被裁切", occluded: "元素遮挡", whitespace: "留白超过三分之一",
+  overflow: "文字溢出", clipped: "标题被裁切", occluded: "元素遮挡", whitespace: "留白超过四分之一",
   page_number: "页码不连续", image_missing: "图片缺失", spread_unpaired: "跨页图不成对",
   image_cropped: "图片被裁切或变形", image_too_small: "图片缩得过小",
 };

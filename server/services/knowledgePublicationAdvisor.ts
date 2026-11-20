@@ -24,11 +24,15 @@ import {
   type KnowledgeSource,
 } from "../../shared/knowledgePublication";
 import { readCanonicalLayoutLibrary } from "./editableLayoutStore";
+import { getJobByIdStrict } from "../jobs/repository";
+import type { KnowledgeReadingPreparation } from "../../shared/knowledgeReadingPreparation";
 import {
   downloadGcsObjectVersioned,
   getGcsBucketName,
   inspectGcsObjectBounded,
+  statGcsObjectVersion,
   uploadBufferToGcs,
+  uploadBufferToGcsIfAbsent,
   signGsUriV4ReadUrl,
 } from "./gcs";
 import {
@@ -60,6 +64,31 @@ export async function loadKnowledgePublication(
     publication: NonNullable<typeof document.publication>;
   };
 }
+
+/**
+ * 读档预整理（同步顾问分段笔记）的进程内复用（1119 E3）。原先每个审校批次在「权限核验」与「审校」各重读一遍：
+ * 解析整本读档稿 + 读全部分段回执（大书数百个对象）。
+ * 键 = 账号 | 读档任务 | 稿件 | 分段数 | 档位 | 本稿参与核对的正文摘要（与 loadVerifiedKnowledgeReadingNotes 的一致性核对同输入）：
+ * 正文一改、换读档任务、换稿件或换账号，键即不同。只缓存「全部分段都已完成」的结果——分段回执落盘后永久不变；
+ * 未完成（还有分段在读）的结果不缓存，下次重读以拿到新完成的分段；加载失败不缓存。容量 4、10 分钟过期。
+ */
+const knowledgeReadingNotesCache = new KnowledgeTtlCache<Awaited<ReturnType<typeof import("./knowledgeReadingPreparation").loadVerifiedKnowledgeReadingNotes>>>(4, 10 * 60_000);
+export function knowledgeReadingNotesCacheKey(owner: number, link: KnowledgeReadingPreparation, source: KnowledgeSource) {
+  const reading = source.pages.filter(p => p.role === "reading" || source.detailLevel === "full").map(p => p.body);
+  return [owner, link.jobId, link.documentId, link.batches, source.detailLevel ?? "", createHash("sha256").update(JSON.stringify(reading)).digest("hex")].join("|");
+}
+export async function loadKnowledgeReadingNotesForReview(
+  owner: number, link: KnowledgeReadingPreparation, source: KnowledgeSource,
+  load?: (owner: number, link: KnowledgeReadingPreparation, source: KnowledgeSource) => ReturnType<typeof import("./knowledgeReadingPreparation").loadVerifiedKnowledgeReadingNotes>,
+) {
+  const key = knowledgeReadingNotesCacheKey(owner, link, source);
+  const hit = knowledgeReadingNotesCache.peek(key);
+  if (hit) return [...await hit];
+  const notes = await (load ?? (async (o, l, s) => (await import("./knowledgeReadingPreparation")).loadVerifiedKnowledgeReadingNotes(o, l, s, undefined, false)))(owner, link, source);
+  if (notes.length === link.batches) knowledgeReadingNotesCache.set(key, notes);
+  return [...notes];
+}
+export const clearKnowledgeReadingNotesCache = () => knowledgeReadingNotesCache.clear();
 
 /** 按权威素材登记验证归属，不能把客户端提供的地址当作读取许可。 */
 export async function validateKnowledgePublicationAccess(
@@ -93,13 +122,16 @@ export async function validateKnowledgePublicationAccess(
     const { checkKnowledgePublicationRetry } = await import("./knowledgePublicationRetry");
     await checkKnowledgePublicationRetry(owner, document, context.batchIndex, context.attempt - 1, { read });
   }
-  if (document.publication.source.readingPreparation) await (await import("./knowledgeReadingPreparation")).loadVerifiedKnowledgeReadingNotes(owner,document.publication.source.readingPreparation,document.publication.source,undefined,false);
+  if (document.publication.source.readingPreparation) await loadKnowledgeReadingNotesForReview(owner,document.publication.source.readingPreparation,document.publication.source);
   const selected = knowledgeReviewBatches(document.publication.source)[context.batchIndex];
-  const resolvedSource = await resolveKnowledgePublicationImages(owner, document.publication.source, selected, undefined, document.publication.imageReplacements);
-  const sources = await loadSucceededJobOutputSources(
-    String(owner),
-    getGcsBucketName()
-  );
+  // 本人成功任务产物登记（整表分页扫描）在本次核验内只读一次：配图解析与归属核对共用同一份，不跨请求缓存（权威登记以本次读取为准）。
+  let jobSources: ReturnType<typeof loadSucceededJobOutputSources> | undefined;
+  const loadJobSources = () => (jobSources ??= loadSucceededJobOutputSources(String(owner), getGcsBucketName()));
+  const resolvedSource = await resolveKnowledgePublicationImages(owner, document.publication.source, selected, {
+    job: getJobByIdStrict,
+    canonical: async (o: number, url: string) => { const s = await loadJobSources(); return resolveRegisteredPostProdMediaSource({ userId: String(o), source: url }, undefined, { jobObjects: s.objects, jobUrls: s.urls }); },
+  }, document.publication.imageReplacements);
+  const sources = await loadJobSources();
   for (const page of resolvedSource.pages) {
     if (!page.imageUrl) continue;
     const canonical = await resolveRegisteredPostProdMediaSource(
@@ -117,14 +149,30 @@ export async function validateKnowledgePublicationAccess(
 }
 
 export async function readKnowledgeImage(uri: string) {
-  const chunks: Buffer[] = [];
-  const inspected = await inspectGcsObjectBounded({
-    gcsUri: uri,
-    maxBytes: 20 * 1024 * 1024,
-    timeoutMs: 60000,
-    onChunk: chunk => chunks.push(Buffer.from(chunk)),
-  });
-  const buffer = Buffer.concat(chunks);
+  // 先取对象版本（generation / crc32c / 字节数）再按该 generation 锁定下载：指纹与版本一一对应，供导出只比对元数据（见 knowledgeImageFingerprint*）。
+  // 取版本失败、或下载时对象已被换版（412）：回到原先的不锁版本下载，不返回版本（调用方不记指纹），读图行为与原先一致。
+  let version: Awaited<ReturnType<typeof statGcsObjectVersion>> | undefined;
+  try { version = await statGcsObjectVersion({ gcsUri: uri }); } catch { version = undefined; }
+  const download = async (generation?: string) => {
+    const chunks: Buffer[] = [];
+    const inspected = await inspectGcsObjectBounded({
+      gcsUri: uri,
+      maxBytes: 20 * 1024 * 1024,
+      timeoutMs: 60000,
+      ...(generation ? { generation } : {}),
+      onChunk: chunk => chunks.push(Buffer.from(chunk)),
+    });
+    return { inspected, buffer: Buffer.concat(chunks) };
+  };
+  let read: Awaited<ReturnType<typeof download>>;
+  if (version) {
+    try { read = await download(version.generation); }
+    catch (e) {
+      if (!(e instanceof Error && /^gcs_download_failed:(412|404)$/.test(e.message))) throw e;
+      version = undefined; read = await download();
+    }
+  } else read = await download();
+  const { inspected, buffer } = read;
   const meta = await sharp(buffer, { limitInputPixels: 40_000_000 }).metadata();
   if (
     !meta.width ||
@@ -138,7 +186,42 @@ export async function readKnowledgeImage(uri: string) {
     mimeType: `image/${meta.format}`,
     width: meta.width,
     height: meta.height,
+    // 仅当按 generation 锁定下载、且实读字节数与该版本登记大小一致时才带回版本，否则不带（不记指纹）。
+    ...(version && inspected.generation === version.generation && version.byteLength === buffer.length
+      ? { generation: version.generation, crc32c: version.crc32c, byteLength: buffer.length } : {}),
   };
+}
+
+/**
+ * 配图版本指纹（1119 导出提速）：审校读图 / 导出回退下载时，把「对象 + generation → sha256、字节数、crc32c」永久记下。
+ * GCS 同一对象同一 generation 内容不可变，所以导出时只需取一次对象元数据比对 generation / crc32c / 字节数，
+ * 一致且指纹 sha256 等于审校回执中的 sha256 即可确认原图未变，不必重新下载 4K 原图计算指纹。
+ * 记录按 (对象, generation) 只建不改（条件创建），不进任何回执、摘要或成品目录身份。
+ */
+export type KnowledgeImageFingerprint = { kind: "knowledge_image_fingerprint_v1"; uri: string; generation: string; crc32c?: string; byteLength: number; sha256: string; recordedAt: string };
+export const knowledgeImageFingerprintName = (uri: string, generation: string) =>
+  `knowledge-publications/image-fingerprints/${createHash("sha256").update(uri).digest("hex")}/${generation}.json`;
+/** 读回指纹：格式、对象与 generation 任何一项不符都视为没有（走下载）。 */
+export function parseKnowledgeImageFingerprint(value: unknown, uri: string, generation: string): KnowledgeImageFingerprint | undefined {
+  const v = value as Partial<KnowledgeImageFingerprint> | null;
+  if (!v || v.kind !== "knowledge_image_fingerprint_v1" || v.uri !== uri || v.generation !== generation) return undefined;
+  if (typeof v.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(v.sha256) || !Number.isSafeInteger(v.byteLength) || (v.byteLength as number) < 1) return undefined;
+  if (v.crc32c !== undefined && typeof v.crc32c !== "string") return undefined;
+  return v as KnowledgeImageFingerprint;
+}
+export async function recordKnowledgeImageFingerprint(
+  uri: string,
+  image: { sha256: string; generation?: string; crc32c?: string; byteLength?: number },
+  create: (name: string, buffer: Buffer) => Promise<unknown> = (name, buffer) => uploadBufferToGcsIfAbsent({ objectName: name, buffer, contentType: "application/json" }),
+) {
+  if (!image.generation || !Number.isSafeInteger(image.byteLength) || !/^[a-f0-9]{64}$/.test(image.sha256)) return false;
+  const record: KnowledgeImageFingerprint = { kind: "knowledge_image_fingerprint_v1", uri, generation: image.generation, ...(image.crc32c ? { crc32c: image.crc32c } : {}), byteLength: image.byteLength!, sha256: image.sha256, recordedAt: new Date().toISOString() };
+  try { await create(knowledgeImageFingerprintName(uri, image.generation), Buffer.from(JSON.stringify(record))); return true; }
+  catch (e) {
+    // 指纹只是提速：写失败不影响审校/导出，下次导出走下载并补记。
+    console.warn(`[knowledgePublication] 配图指纹未记下（下次导出改为下载核对）：${String(e instanceof Error ? e.message : e).replace(/(?:https?|gs):\/\/\S+/g, "[地址]").slice(0, 200)}`);
+    return false;
+  }
 }
 
 /** 回执必须覆盖全部实际配图；空回执或额外页均不能证明读图。 */
@@ -219,7 +302,9 @@ export function buildKnowledgeReviewRequest(
 
 const real = {
   load: loadKnowledgePublication,
-  image: readKnowledgeImage,
+  image: readKnowledgeImage as (uri: string) => Promise<Awaited<ReturnType<typeof readKnowledgeImage>>>,
+  /** 审校读图后记版本指纹（可选注入；缺省按条件创建写入 GCS）。 */
+  recordImage: undefined as undefined | ((uri: string, image: Awaited<ReturnType<typeof readKnowledgeImage>>) => Promise<unknown>),
   read: async (name: string) => {
     try {
       return JSON.parse(
@@ -350,8 +435,11 @@ export function dedupeKnowledgeReviewAgainstImages(source: KnowledgeSource, page
   return { pages: next, removed };
 }
 
-/** 篇幅压缩同时在途的请求路数（站长 2026-11-13：一次并发两路）。 */
-export const KNOWLEDGE_COMPRESSION_LANES = 2;
+/**
+ * 篇幅压缩同时在途的请求路数（站长 2026-11-19：由两路改为四路——两个通道各两路；每路首跳失败按正式链切到另一通道再到备用模型）。
+ * 通道按组序交错（第 0/2/4… 组首跳 EvoLink，第 1/3/5… 组首跳 OpenRouter），与路数无关，已存请求的首跳通道不因改路数而变。
+ */
+export const KNOWLEDGE_COMPRESSION_LANES = 4;
 /** 篇幅压缩每次请求的章数上限（站长 2026-11-13：一次并发两到三章）。 */
 export const KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS = 3;
 /** 篇幅压缩最多轮数：每轮一次正式三跳链调用（GLM FlashX@EvoLink → GLM@OpenRouter → DeepSeek v4.1 Flash 1017，超时/断线/空回/写坏由路由切下一跳）。 */
@@ -466,7 +554,8 @@ export async function compressKnowledgeReviewToBudget(params: {
       const headlineOf = new Map(after.map(o => [o.id, o.headline]));
       const results: (ReturnType<typeof validateKnowledgeReview>["pages"] | undefined)[] = new Array(units.length);
       const failed: (string | undefined)[] = new Array(units.length);
-      // 一次并发两路（站长 2026-11-13）：两路各走一个通道作首跳，失败按正式链切到另一通道再到备用模型。
+      // 四路并发（站长 2026-11-19，原两路）：两个通道各两路作首跳，失败按正式链切到另一通道再到备用模型。
+      // 每路按固定步长取组（第 worker、worker+路数… 组），结果按组下标写回；一组失败只记该组，路继续取下一组，不丢章、不重复。
       const workerCount = Math.min(KNOWLEDGE_COMPRESSION_LANES, units.length);
       await Promise.all(Array.from({ length: workerCount }, async (_, worker) => {
         for (let index = worker; index < units.length; index += workerCount) {
@@ -474,7 +563,8 @@ export async function compressKnowledgeReviewToBudget(params: {
           try {
             // 各组首跳在两个通道间交错（相邻组走不同路由）；本组首跳失败后按正式链切到另一通道再到备用模型，互相兜底。
             // 输入容量由 getRaw 的容量核算把关（超上限即不发、不截断）；一组至多三章，远低于上限。
-            const raw = await getRaw(deps, unit.prefix, attempt, digest, [], roundRequest(keep, worker % 2 === 0 ? "evolink" : "openrouter"), { firstSendWithoutReceipt: true });
+            // 首跳通道按组下标奇偶（index % 2）：两路时 worker===index%2、四路时 worker%2===index%2，与原两路分配逐组一致。
+            const raw = await getRaw(deps, unit.prefix, attempt, digest, [], roundRequest(keep, index % 2 === 0 ? "evolink" : "openrouter"), { firstSendWithoutReceipt: true });
             results[index] = validateKnowledgeReview(parseRaw(raw, false), roundSource(keep), digest).pages;
           } catch (e) {
             failed[index] = `${unit.ids.map(id => `《${headlineOf.get(id)}》`).join("")}${e instanceof Error ? e.message : String(e)}`;
@@ -552,7 +642,7 @@ export async function compressKnowledgeFinalReport(deps: typeof real, root: stri
   const pending = measureOverflow ? measureOverflow(saved.report.pages)
     : knowledgeReadingOverflow(source.detailLevel, source.pages, saved.report.pages.map((p: any) => ({ id: p.id, chars: knowledgeReviewPageChars(p) })), source.readingContract);
   if (!pending.length) return saved;
-  // 新合同：统稿后标记的章三章一组、两路并发压一轮，仍超的章再压一轮（合计 ≤2 轮）；
+  // 新合同：统稿后标记的章三章一组、四路并发（两通道各两路，2026-11-19）压一轮，仍超的章再压一轮（合计 ≤2 轮）；
   // 之后仍超出的章随报告报出、排成续页，不截断。旧稿沿用原 4 轮。
   const compressed = await compressKnowledgeReviewToBudget({ deps, prefix: `${root}/final-compress`, attempt, digest, source, pages: saved.report.pages, ...(source.readingContract === KNOWLEDGE_READING_CONTRACT ? { maxRounds: 2 } : {}), ...(measureOverflow ? { measureOverflow } : {}) });
   if (JSON.stringify(compressed.pages) === JSON.stringify(saved.report.pages)) {
@@ -786,6 +876,8 @@ export async function reviewKnowledgePublication(
   for (const page of batchSource.pages)
     if (page.imageUrl && !images.has(page.imageUrl))
       images.set(page.imageUrl, await deps.image(page.imageUrl));
+  // 审校读图时记下版本指纹（只有锁版本读到的图才有 generation；测试注入的读图不带版本即不记）。写失败只记日志。
+  for (const [uri, image] of Array.from(images.entries())) await Promise.resolve((deps.recordImage ?? recordKnowledgeImageFingerprint)(uri, image)).catch(() => undefined);
   // 分配保存在原稿中；旧请求恢复时 getRaw 仍以原始永久请求为准。
   const channel = document.publication.parallel?.channels[String(context.batchIndex)];
   // 审校批次：通道由 parallel.channels 指定（EvoLink 优先分配）；模型序按稿件 parallel.family（新稿 glm→deepseek，旧稿沿用 deepseek 优先）。
@@ -803,7 +895,7 @@ export async function reviewKnowledgePublication(
     }
   }
   if (source.readingPreparation) {
-    const notes = await (await import("./knowledgeReadingPreparation")).loadVerifiedKnowledgeReadingNotes(owner,source.readingPreparation,source,undefined,false);
+    const notes = await loadKnowledgeReadingNotesForReview(owner,source.readingPreparation,source);
     // 已读分段是前期工作，最终稿仍是真源；不拿旧段落覆盖统稿修订。
     const batchText=batchSource.pages.map(p=>p.body).join("\n");
     const relevant=notes.flatMap(note=>note.pages).flatMap(page=>{
