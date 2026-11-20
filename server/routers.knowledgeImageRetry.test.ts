@@ -11,7 +11,7 @@ vi.mock("./jobs/compositeSheetLiveProgress.js", () => ({ attachCompositeSheetFlo
 vi.mock("./services/tier-provider-routing", async original => ({ ...await original<any>(), resolveWatermark: async () => false }));
 vi.mock("./services/paidJobLedger.js", async original => ({ ...await original<any>(), registerActiveJob: async () => {}, refundCreditsOnFailure: mocks.refund, unregisterActiveJob: mocks.settle, markSettlementPending: mocks.pending }));
 import { appRouter } from "./routers";
-const base = { sceneId: "image-retry-test", title: "水循环", scriptContext: "# 水循环\n\n蒸发后凝结成雨。", kind: "single_page_knowledge_card" as const, notePageIndex: 1, notePageTotal: 1, distillModel: "deepseek-v4.1-flash-1017", confirmedPageCredits: 30, pageRequestId: "12345678-1234-4123-8123-123456789abc" };
+const base = { sceneId: "image-retry-test", title: "水循环", scriptContext: "# 水循环\n\n蒸发后凝结成雨。", approvedImageModel: "gpt-image-2.6-sunburst" as const, kind: "single_page_knowledge_card" as const, notePageIndex: 1, notePageTotal: 1, distillModel: "deepseek-v4.1-flash-1017", confirmedPageCredits: 30, pageRequestId: "12345678-1234-4123-8123-123456789abc" };
 const caller = (role = "user") => appRouter.createCaller({ user: { id: 7, role } } as never);
 beforeEach(() => { vi.resetAllMocks(); mocks.credits.mockResolvedValue({ totalAvailable: 1000 }); mocks.deduct.mockResolvedValue({ cost: 30, source: "personal" }); mocks.refund.mockResolvedValue({ refunded: false, status: "refund_pending" }); mocks.settle.mockResolvedValue(undefined); mocks.pending.mockResolvedValue(true); });
 describe("知识配图失败重购证据来自真实分支", () => {

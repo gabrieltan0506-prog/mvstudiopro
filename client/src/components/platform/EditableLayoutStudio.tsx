@@ -50,7 +50,7 @@ const field =
 export type EditableLayoutStudioHandle = {
   refineSupplement: (sourceId:string)=>Promise<{selection:KnowledgeSupplementSelection;markdown:string}>;
   beginNewSource: () => void;
-  prepare: (source: LayoutSource, waitForImages: (ids: string[]) => Promise<void>, supplementOf?: KnowledgeSupplementSelection, options?: {waitForReading?:()=>Promise<void>;preparePresentation?:boolean}) => Promise<{ documentId: string; maxCredits: number; estimatedCredits: number; presentationCredits?:number }>;
+  prepare: (source: LayoutSource, waitForImages: (ids: string[]) => Promise<void>, supplementOf?: KnowledgeSupplementSelection, options?: {waitForReading?:()=>Promise<void>;preparePresentation?:boolean;cardsOnly?:boolean}) => Promise<{ documentId: string; maxCredits: number; estimatedCredits: number; presentationCredits?:number }>;
   start: (documentId: string, authorizedCredits: number) => Promise<void>;
   imageJobs: (markdown: string, model: string, template: string | null) => string[] | null;
   beginImageAttempt: (originalJobId: string, requestId: string, jobId: string) => Promise<void>;
@@ -104,7 +104,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
   const [autoPublicationId,setAutoPublicationId]=useState("");
   const [autoStartToken, setAutoStartToken] = useState(0);
   const [synchronizedRun, setSynchronizedRun] = useState<{ documentId: string; authorizedCredits: number; presentationCredits?:number; preparePresentation?:boolean; waitForReading?:()=>Promise<void>; waitForImages: (ids: string[]) => Promise<void> } | null>(null);
-  const preparedRun = useRef<{ documentId: string; presentationCredits?:number; preparePresentation?:boolean; waitForReading?:()=>Promise<void>; waitForImages: (ids: string[]) => Promise<void> } | null>(null);
+  const preparedRun = useRef<{ documentId: string; presentationCredits?:number; preparePresentation?:boolean; waitForReading?:()=>Promise<void>; waitForImages: (ids: string[]) => Promise<void>; cardsOnlyDoc?: EditableLayout } | null>(null);
   const utils = trpc.useUtils();
   const saveMutation = trpc.editableLayout.save.useMutation();
   const finishedExportStarter = trpc.editableLayout.startExportPublication.useMutation();
@@ -359,6 +359,16 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
     async prepare(source, waitForImages, supplementOf, options) {
       if (!ready || !cloudReady || locked.current || source.owner !== owner) throw new Error("云端稿件尚未就绪或正在整理，请稍后开始");
       const nextDoc = layoutFromSource(source);
+      if (options?.cardsOnly) {
+        // 只出卡片（1119 C3）：确认前不写云稿、不取顾问与排版报价。用户确认后由 start 一次云端保存写入
+        // synchronizedStarted（图片任务身份随稿入库，补图/恢复照常找得到）并标记内文排版未授权（billing.confirmed=false），
+        // 不写 automaticLayout、不设同步顾问运行——不启动任何顾问或排版。
+        // 复审：原先在确认弹窗之前就写 synchronizedStarted=true，取消后留下「已开始」的空壳稿，
+        // imageJobs() 会优先命中它（较新）→ 补图把原成品的已付费页当成未提交页重买。
+        if (supplementOf || options.preparePresentation) throw new Error("只出卡片不能同时补图或准备演示稿，未开始生成");
+        preparedRun.current = { documentId: nextDoc.id, waitForImages, cardsOnlyDoc: nextDoc };
+        return { documentId: nextDoc.id, maxCredits: 0, estimatedCredits: 0, presentationCredits: 0 };
+      }
       if (nextDoc.publication) {
         nextDoc.publication.synchronizedStarted = false;nextDoc.publication.supplementOf=supplementOf;
         if(options?.preparePresentation)nextDoc.publication.presentationRequest={id:crypto.randomUUID(),basis:"source",minSlides:15,maxSlides:20,manuscript:knowledgePresentationSourceManuscript(nextDoc.publication.source)};
@@ -370,9 +380,19 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
       install({ library, generation: result.generation, dirty: false, activeId: nextDoc.id });
       preparedRun.current = { documentId: nextDoc.id, waitForImages,waitForReading:options?.waitForReading,preparePresentation:options?.preparePresentation };
       setOpen(true);
-      const quote = await utils.editableLayout.publicationQuote.fetch({ documentId: nextDoc.id });
-      const presentation = options?.preparePresentation ? await utils.editableLayout.publicationQuote.fetch({documentId:nextDoc.id,purpose:"presentation"}) : null;
-      const layoutQuote = !supplementOf ? await utils.editableLayout.publicationQuote.fetch({documentId:nextDoc.id,purpose:"conversation"}) : null;
+      // 三项报价并发（1119 C3）；任一失败按原串行顺序抛第一个错误，绝不带着部分报价继续。
+      const settled = await Promise.allSettled([
+        utils.editableLayout.publicationQuote.fetch({ documentId: nextDoc.id }),
+        options?.preparePresentation ? utils.editableLayout.publicationQuote.fetch({documentId:nextDoc.id,purpose:"presentation"}) : Promise.resolve(null),
+        !supplementOf ? utils.editableLayout.publicationQuote.fetch({documentId:nextDoc.id,purpose:"conversation"}) : Promise.resolve(null),
+      ]);
+      const failed = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
+      if (failed) throw failed.reason;
+      const [quote, presentation, layoutQuote] = settled.map(r => (r as PromiseFulfilledResult<unknown>).value) as [
+        Awaited<ReturnType<typeof utils.editableLayout.publicationQuote.fetch>>,
+        Awaited<ReturnType<typeof utils.editableLayout.publicationQuote.fetch>> | null,
+        Awaited<ReturnType<typeof utils.editableLayout.publicationQuote.fetch>> | null,
+      ];
       if(layoutQuote && nextDoc.publication){
         nextDoc.publication.automaticLayout={requestId:crypto.randomUUID(),maxCredits:layoutQuote.maxCredits};
         await commitPublication(nextDoc);
@@ -424,12 +444,26 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
         const saved = await cloudSave({ library, expectedGeneration: previous.generation });
         install({ library, generation: saved.generation, dirty: false, activeId: target.id });
         setSynchronizedRun(null);
-        if (resume) { setAutoPublicationId(target.id); setAutoStartToken(token => token + 1); setOpen(true); }
+        // 只出卡片的稿（内文排版未授权）补齐最后一页也不自动启动顾问整理/排版
+        const cardsOnly = pub.billing?.confirmed === false && !pub.automaticLayout;
+        if (resume && !cardsOnly) { setAutoPublicationId(target.id); setAutoStartToken(token => token + 1); setOpen(true); }
       } finally { locked.current = false; }
     },
     async start(documentId, authorizedCredits) {
       const pending = preparedRun.current;
       if (!pending || pending.documentId !== documentId) throw new Error("同步稿件已变化，未开始生成");
+      if (pending.cardsOnlyDoc) {
+        if (authorizedCredits !== 0) throw new Error("只出卡片不含排版收费，未开始生成");
+        if (!cloudReady || locked.current) throw new Error("云端稿件尚未就绪或正在整理，请稍后开始");
+        const doc = pending.cardsOnlyDoc;
+        const previous = current.current;
+        const confirmed = { ...doc, publication: doc.publication ? { ...doc.publication, synchronizedStarted: true, billing: { version: "interior-pages-v1" as const, confirmed: false } } : doc.publication };
+        const library = layoutLibrarySchema.parse({ ...previous.library, documents: [...previous.library.documents, confirmed] });
+        const saved = await cloudSave({ library, expectedGeneration: previous.generation });
+        install({ library, generation: saved.generation, dirty: false, activeId: documentId });
+        preparedRun.current = null;
+        return;
+      }
       const previous = current.current;
       const child=previous.library.documents.find(d=>d.id===documentId),parentId=child?.publication?.supplementOf?.documentId;
       const parent=previous.library.documents.find(d=>d.id===parentId);

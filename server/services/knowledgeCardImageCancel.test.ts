@@ -36,7 +36,7 @@ describe("刷新只阻止之后的付费提交", () => {
   it("知识卡整链不会吞取消错误再重试", async () => {
     let stopped = false;
     providers.openai.mockImplementation(async () => { stopped = true; return null; });
-    await expect(generatePlatformCompositeSheetImage({ kind: "single_page_knowledge_card", userId: 1, title: "测试", scriptContext: "测试正文", beforeImageSubmit: async () => { if (stopped) throw cancelled; } })).rejects.toBe(cancelled);
+    await expect(generatePlatformCompositeSheetImage({ approvedImageModel: "gpt-image-2.6-sunburst", kind: "single_page_knowledge_card", userId: 1, title: "测试", scriptContext: "测试正文", beforeImageSubmit: async () => { if (stopped) throw cancelled; } })).rejects.toBe(cancelled);
     expect(providers.openai).toHaveBeenCalledTimes(1); expect(providers.evo).not.toHaveBeenCalled();
   });
   it("非页面绑定的调用保留原有回落", async () => {

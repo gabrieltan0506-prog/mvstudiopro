@@ -9,15 +9,32 @@ import * as source from "../../../shared/knowledgeCardEditableLayout";
 import * as identity from "../../../shared/knowledgeCardSourceIdentity";
 import * as selection from "../../../shared/knowledgeCardIllustrationSelection";
 import * as lifecycle from "./knowledgeIllustrationRun";
+import * as handbookVariant from "../../../shared/openaiImageVariant";
+import { knowledgeCardPlannedTextPages } from "./knowledgeCardPreflightCounts";
+import { knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh, knowledgeIllustrationBatchUserMessage } from "./knowledgeIllustrationBatchCounts";
+import { handbookManuscriptNeedsStaging, handbookManuscriptPageBody, stageHandbookManuscript } from "./handbookManuscriptStage";
 
 // 执行生产处理函数，避免只测辅助函数而遗漏按钮之间的真实组合。
-const platform = readFileSync(new URL("../pages/PlatformPage.tsx", import.meta.url), "utf8");
+// 1119 C0：手册前台流程已原样搬到两个 hook；三份源码拼接后按原标记提取同一段生产代码。
+const platform = [
+  "../pages/PlatformPage.tsx", "../hooks/useKnowledgeCardDistill.ts", "../hooks/useKnowledgeCardRender.ts",
+].map(file => readFileSync(new URL(file, import.meta.url), "utf8")).join("\n");
 function take(start: string, end: string) {
   const a = platform.indexOf(start), b = platform.indexOf(end, a);
   if (a < 0 || b < a) throw new Error("生产处理函数位置变化，请更新测试提取范围");
   return platform.slice(a, b);
 }
 function run(raw: string, ctx: any) {
+  // 1119：出图 hook 新引用的模块级导入（授权档常量、文字页数、批次计数）按真实实现注入。
+  Object.assign(ctx, { ...handbookVariant, knowledgeCardPlannedTextPages, knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh, knowledgeIllustrationBatchUserMessage, handbookManuscriptNeedsStaging, handbookManuscriptPageBody, stageHandbookManuscript }, { customNoteCardsOnly: ctx.customNoteCardsOnly ?? false, setKnowledgeDistillLive: ctx.setKnowledgeDistillLive });
+  // 与 useKnowledgeCardRender 内同名辅助一致（1119 C4）：20 万字及以下原样 {markdown}，超过才走摘要
+  ctx.handbookStageApi ??= () => ({
+    stageChunk: (input: any) => ctx.trpcUtils.client.mvAnalysis.stageKnowledgeCardManuscriptChunk.mutate(input),
+    finalize: (input: any) => ctx.trpcUtils.client.mvAnalysis.finalizeKnowledgeCardManuscript.mutate(input),
+  });
+  ctx.handbookQuoteInput ??= async (markdown: string, distillModel: string) => handbookManuscriptNeedsStaging(markdown)
+    ? { manuscriptDigest: await stageHandbookManuscript(markdown, ctx.handbookStageApi()), distillModel }
+    : { markdown, distillModel };
   vm.createContext(ctx);
   vm.runInContext(ts.transpileModule(raw, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText, ctx);
 }
@@ -101,7 +118,7 @@ function entryContext(full: string | null = null) {
   };
   for (const name of ["setCustomNoteImageUpper", "setCustomNoteImageLower", "setCustomNoteImages", "setCustomNotePageProgress", "setCustomNoteError", "setCustomOptimizeResult", "setCustomOptimizeSummary", "setCustomNoteProgress", "setCustomNotePartInFlight", "setCustomNoteDistillPhase", "setCustomNoteRendering", "setKnowledgeCardPdfUrl"]) ctx[name] = noop;
   ctx.setCustomNoteBusy = (value: boolean) => { ctx.customNoteBusy = value; };
-  run(take("  const handleGenerateCustomNote = async", "\n  const handleAssetDeepOptimize") + take("  const handleAssetGenerateFromText = useCallback(", "\n  const handleGenerateFromOptimizedCopy") + "\nglobalThis.generate = handleGenerateCustomNote; globalThis.asset = handleAssetGenerateFromText;", ctx);
+  run(take("  const handleGenerateCustomNote = async", "\n\n  return { retryKnowledgeCardPage") + take("  const handleAssetGenerateFromText = useCallback(", "\n  const handleGenerateFromOptimizedCopy") + "\nglobalThis.generate = handleGenerateCustomNote; globalThis.asset = handleAssetGenerateFromText;", ctx);
   return ctx;
 }
 describe("原稿和另一入口 KH-SYNC-03/KH-PRICE-04", () => {
@@ -152,6 +169,8 @@ it("素材按钮到实际单图请求保持同一报价和一次确认 KH-PRICE-
     generateCustomNoteMutation: { mutateAsync: vi.fn(async (input: any) => {
       expect(ctx.askKnowledgeCardPreflight).toHaveBeenCalledTimes(1);
       assertKnowledgeCardConfirmedPrice(input.distillModel, input.notePageIndex, input.confirmedPageCredits);
+      // 1119 C1：手册请求固定授权档，不读前台偏好（偏好桩返回非法值也不影响）
+      expect(input.openaiImageVariant).toBe("sunburst");
       expect(input.scriptContext).toBe("素材正文：月球影响潮汐。");
       return { imageUrl: "https://test.invalid/image.png" };
     }) },
@@ -181,7 +200,11 @@ describe("真实云稿句柄保存与恢复 KH-SYNC-02", () => {
       setSynchronizedRun: noop, setAutoPublicationId: noop, setAutoStartToken: noop, setOpen: noop,
     };
     ctx.install = (next: any) => { ctx.current.current = next; };
-    run("globalThis.handle = {" + methods + "};", ctx);
+    // 根因（1119）：生产方法改经 cloudSave 统一入口保存，旧夹具只给了 saveMutation，于是报 cloudSave is not defined。
+    // 这里一并提取真实的 cloudSave，保留「不完整库拒绝保存」等原有保护。
+    Object.assign(ctx, { partialLibrary: { current: false }, legacyPresent: { current: false }, legacyInMemory: { current: false }, legacyKey: "test", localStorage: { removeItem: noop } });
+    const cloudSave = studio.slice(studio.indexOf("  const cloudSave = async"), studio.indexOf("\n  useEffect(", studio.indexOf("  const cloudSave = async")));
+    run(cloudSave + "\nglobalThis.handle = {" + methods + "};", ctx);
     return ctx;
   }
   it("条件保存先于读取当前尝试，第二次失败重试仍绑定原始页", async () => {
@@ -271,7 +294,7 @@ it("已成功统稿不被同步顾问状态查询失败阻断",async()=>{
  const requestId=randomUUID(),trackedJobId=await knowledgeCardTrackedJobId("1","knowledge_card_distill",requestId);
  const ctx:any={AbortController,readingControllerRef:{current:null},setReadingAdvisorDrafts:noop,knowledgePollingRef:{current:null},knowledgeCardTrackedJobId,submitKnowledgeCardOnce,workbenchUserKey:"1",customNoteTrackedRequestRef:{current:null},customNoteFollowOnlyJobRef:{current:""},startReadingAdvisor:()=>({update}),readingFullMarkdownRef:{current:""},bumpCustomNoteRevision:noop,customNoteDistillModel:"deepseek-v4.1-flash-1017",customNoteUploadStopRef:{current:false},knowledgeCardPageTasks:{begin:()=>requestId,finish:noop,assertLive:noop},prepareKnowledgeCardCopyMutation:{mutateAsync:async()=>({isAsync:true,progressJobId:trackedJobId,estimatedChunks:1})},pollJobUntilTerminal:async()=>({status:"succeeded",output:{distilledMarkdown:full,readingPreparation:{jobId:"kc_original",documentId:randomUUID(),batches:1,ready:[0]}}}),knowledgeCardProgressFromDistill:(n:number)=>n};
  for(const name of ["setCustomNoteProgress","setCustomNoteFullMarkdown","setCustomNotePreparedModel","setCustomNoteCompactMarkdown","setKnowledgeCardEpubPdfs","setCustomNoteCancelRequested","setCustomNoteDistillJobId","setReadingAdvisorStatus","setCustomNoteUploadStatus"])ctx[name]=vi.fn();
- run(take("  const runKnowledgeCardDistill = async", "\n  /**\n   * 终止后台读档")+"\nglobalThis.distill=runKnowledgeCardDistill;",ctx);
+ run(take("  const runKnowledgeCardDistill = async", "\n\n  return { customNotePaginationKey")+"\nglobalThis.distill=runKnowledgeCardDistill;",ctx);
  expect(await ctx.distill({sourceText:"原始全文"})).toBe(full);expect(ctx.readingFullMarkdownRef.current).toBe(full);expect(update).not.toHaveBeenCalled();
 });
 it('保有完整统稿回执时取消过报价也不再提炼长文',async()=>{
@@ -292,4 +315,170 @@ it('手册正式生成入口只准备PDF，不自动发起PPTX规划',async()=>{
  expect(ctx.layoutStudioRef.current.prepare).toHaveBeenCalledTimes(1);
  expect(ctx.layoutStudioRef.current.prepare.mock.calls[0][3].preparePresentation).toBe(false);
  expect(ctx.generateCustomNoteOne).not.toHaveBeenCalled();
+});
+
+describe("1119 C1/C2/C3 生成入口", () => {
+  function renderContext() {
+    const ctx = entryContext();
+    Object.assign(ctx, {
+      KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH, KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH, knowledgeCardRecordedModelLabel,
+      knowledgeCardRenderConcurrency: (n: number) => Math.min(n, 32), customNoteInfographicLabelZh: "", knowledgeCardProgressFromRender: () => 50,
+      askKnowledgeCardPreflight: vi.fn(async () => true), markInflight: noop, setKnowledgeCardInflight: noop,
+      newPlatformCompositeProgressJobId: randomUUID, extractInfographicSubjectFromUserCopy: () => "稿",
+      COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR: "gpt54",
+      generateCustomNoteMutation: { mutateAsync: vi.fn(async () => ({ imageUrl: "https://test.invalid/image.png" })) },
+    });
+    delete ctx.readOpenAiImageVariantPref;
+    for (const name of ["renderRunIdRef", "renderedSettingsRef", "renderedImageJobsRef", "renderedSubmittedImageJobsRef", "renderedDraftRef", "renderedFullManuscriptRef", "renderedDetailLevelRef", "knowledgeCardLayoutSourceIdRef"]) ctx[name] = { current: name === "renderRunIdRef" ? 0 : null };
+    ctx.knowledgeCardPageTasks.assertLive = noop;
+    ctx.layoutStudioRef.current.prepare = vi.fn(async () => ({ documentId: "doc", maxCredits: 3 }));
+    ctx.layoutStudioRef.current.start = vi.fn(async () => {});
+    run(take("  const generateCustomNoteOne = async (", "\n  const mapCustomNoteError"), ctx);
+    return ctx;
+  }
+  it("确认弹窗带图片页数、文字页数、档名与仅 debug 用的模型名；请求只带授权档", async () => {
+    const ctx = renderContext();
+    await ctx.generate();
+    const summary = ctx.askKnowledgeCardPreflight.mock.calls[0][0];
+    expect(summary.pageCount).toBe(1);
+    expect(typeof summary.textPageCount).toBe("number");
+    expect(summary.imageTierZh).toBe(handbookVariant.HANDBOOK_IMAGE_TIER_LABEL_ZH);
+    expect(summary.imageTierZh).not.toMatch(/gpt|sunburst|flare|openai|evolink/i);
+    expect(summary.imageModelDebug).toBe("gpt-image-2.6-sunburst");
+    expect(ctx.generateCustomNoteMutation.mutateAsync.mock.calls[0][0].approvedImageModel).toBe(summary.imageModelDebug);
+    expect(ctx.generateCustomNoteMutation.mutateAsync.mock.calls[0][0].openaiImageVariant).toBe("sunburst");
+    expect(ctx.layoutStudioRef.current.start).toHaveBeenCalledTimes(1);
+  });
+  it("确认弹窗点「返回修改」：零出图请求、不启动", async () => {
+    const ctx = renderContext(); ctx.askKnowledgeCardPreflight = vi.fn(async () => false);
+    await ctx.generate();
+    expect(ctx.askKnowledgeCardPreflight).toHaveBeenCalledTimes(1);
+    expect(ctx.generateCustomNoteMutation.mutateAsync).not.toHaveBeenCalled();
+    expect(ctx.layoutStudioRef.current.start).not.toHaveBeenCalled();
+  });
+  it("只出卡片：prepare 带 cardsOnly，确认后 start 授权额为 0（只存云稿），仍逐页出图", async () => {
+    const ctx = renderContext(); ctx.customNoteCardsOnly = true;
+    ctx.layoutStudioRef.current.prepare = vi.fn(async () => ({ documentId: "doc", maxCredits: 0 }));
+    await ctx.generate();
+    expect(ctx.layoutStudioRef.current.prepare.mock.calls[0][3]).toMatchObject({ cardsOnly: true, preparePresentation: false });
+    expect(ctx.askKnowledgeCardPreflight.mock.calls[0][0]).toMatchObject({ cardsOnly: true, textPageCount: 0 });
+    expect(ctx.layoutStudioRef.current.start).toHaveBeenCalledWith("doc", 0);
+    expect(ctx.layoutStudioRef.current.start.mock.invocationCallOrder[0]).toBeLessThan(ctx.generateCustomNoteMutation.mutateAsync.mock.invocationCallOrder[0]);
+    expect(ctx.generateCustomNoteMutation.mutateAsync).toHaveBeenCalledTimes(1);
+  });
+  it("只出卡片：确认弹窗取消→不调用 start（云稿不写「已开始」），零出图", async () => {
+    const ctx = renderContext(); ctx.customNoteCardsOnly = true; ctx.askKnowledgeCardPreflight = vi.fn(async () => false);
+    await ctx.generate();
+    expect(ctx.layoutStudioRef.current.start).not.toHaveBeenCalled();
+    expect(ctx.generateCustomNoteMutation.mutateAsync).not.toHaveBeenCalled();
+  });
+  it("批次错误带分项计数时，失败提示如实报已完成页而非「未生成」", () => {
+    const counts = knowledgeIllustrationBatchCounts(Object.assign(new Error("部分页失败"), { counts: { succeeded: 3, failed: 1, pendingVerification: 1, notDispatched: 2 } }));
+    expect(counts).toMatchObject({ succeeded: 3, failed: 1, pending: 1, notDispatched: 2 });
+    expect(knowledgeIllustrationBatchSummaryZh(counts!)).toContain("已完成 3 页");
+    expect(knowledgeIllustrationBatchCounts(new Error("旧版普通错误"))).toBeNull();
+  });
+  // 线 D 的 KnowledgeIllustrationBatchError（鸭子类型）：Error + summary{succeeded,failed,unknown,notDispatched,stoppedBy}
+  const batchError = (message: string, summary: Record<string, unknown>) => Object.assign(new Error(message), { summary: { total: 4, dispatched: 4, ...summary } });
+  function batchContext(behaviour: (ctx: any) => Promise<void>) {
+    const ctx = renderContext();
+    ctx.toast = { error: vi.fn(), success: vi.fn(), info: vi.fn(), message: vi.fn() };
+    ctx.setCustomNoteError = vi.fn();
+    ctx.mapCustomNoteError = vi.fn((e: Error) => e.message);
+    const progress: any[] = [];
+    ctx.setCustomNoteProgress = (v: any) => progress.push(typeof v === "function" ? v({ status: "running", percent: 40 }) : v);
+    ctx.runKnowledgeIllustrationBatch = vi.fn(async () => behaviour(ctx));
+    return { ctx, progress };
+  }
+  it("批次错误（服务端新形态）：用户句只由计数拼成，不带引擎名/401，也不交给脱敏", async () => {
+    const { ctx, progress } = batchContext(async () => { throw batchError("配图完成 2/4 页：OpenAI generations HTTP 401: invalid api key (gpt-image-2.6-sunburst)", { succeeded: 2, failed: 1, unknown: 1, notDispatched: 0, stoppedBy: null }); });
+    await ctx.generate();
+    const shown = ctx.toast.error.mock.calls[0][0] as string;
+    expect(shown).toContain("已完成 2 页");
+    expect(shown).toContain("1 页结果待核实（不会自动重新购买）");
+    expect(shown).not.toMatch(/openai|gpt|sunburst|401|api key/i);
+    expect(ctx.setCustomNoteError.mock.calls.at(-1)[0]).toBe(shown);
+    expect(ctx.mapCustomNoteError).not.toHaveBeenCalled();
+    expect(progress.at(-1).status).toBe("failed");
+  });
+  it("用户按停止且有页失败（非整批必败）：走「已停止」并报分项计数", async () => {
+    const { ctx, progress } = batchContext(async (c) => { c.customNoteStopRenderRef.current = true; throw batchError("配图完成 1/4 页：EvoLink 失败", { succeeded: 1, failed: 1, unknown: 1, notDispatched: 1, stoppedBy: "inactive" }); });
+    await ctx.generate();
+    expect(progress.at(-1).status).toBe("stopped");
+    expect(progress.at(-1).error).toContain("1 页结果待核实");
+    expect(ctx.toast.message.mock.calls[0][0]).toContain("已停止出图");
+    expect(ctx.toast.message.mock.calls[0][0]).not.toMatch(/evolink/i);
+    expect(ctx.toast.error).not.toHaveBeenCalled();
+  });
+  it("用户按停止但批次因整批必败停止：仍报失败（不被说成用户停止）", async () => {
+    const { ctx, progress } = batchContext(async (c) => { c.customNoteStopRenderRef.current = true; throw batchError("x", { succeeded: 0, failed: 1, unknown: 0, notDispatched: 3, stoppedBy: "batch_fatal" }); });
+    await ctx.generate();
+    expect(progress.at(-1).status).toBe("failed");
+    expect(ctx.toast.error.mock.calls[0][0]).toContain("已停止派发新页");
+  });
+  it("旧版批次（首错即抛普通错误）：按原逻辑报失败并经 mapCustomNoteError", async () => {
+    const { ctx, progress } = batchContext(async (c) => { c.customNoteStopRenderRef.current = true; throw new Error("旧版首个错误"); });
+    await ctx.generate();
+    expect(progress.at(-1).status).toBe("failed");
+    expect(ctx.mapCustomNoteError).toHaveBeenCalledTimes(1);
+    expect(ctx.toast.error.mock.calls[0][0]).toContain("旧版首个错误");
+  });
+  it("旧版批次（void 返回）+ 用户停止：仍按已出页数报「已停止」", async () => {
+    const { ctx, progress } = batchContext(async (c) => { c.customNoteStopRenderRef.current = true; });
+    await ctx.generate();
+    expect(progress.at(-1).status).toBe("stopped");
+    expect(ctx.toast.error).not.toHaveBeenCalled();
+  });
+});
+
+describe("1119 C4 生成入口：大稿只带摘要与本页正文", () => {
+  function oneContext() {
+    const sent: any[] = [];
+    const ctx: any = { console, crypto: webcrypto, TextEncoder, Set, Map, ...pagination, knowledgeCardPageTasks: { assertLive: noop, begin: () => randomUUID(), finish: noop },
+      newPlatformCompositeProgressJobId: randomUUID, extractInfographicSubjectFromUserCopy: () => "稿", COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR: "gpt54",
+      customNoteDistillModel: "deepseek-v4.1-flash-1017", customNoteSubjectPosition: "left", customNoteInfographicTemplateId: null, enabledPlatformSkillIds: new Set(), allowBloggerTitle: false,
+      generateCustomNoteMutation: { mutateAsync: vi.fn(async (input: any) => { sent.push(input); return { imageUrl: "https://test.invalid/x.png" }; }) },
+      trpcUtils: { client: { mvAnalysis: { stageKnowledgeCardManuscriptChunk: { mutate: vi.fn(async () => ({ stored: true })) }, finalizeKnowledgeCardManuscript: { mutate: vi.fn(async () => ({})) } } } } };
+    run(take("  const generateCustomNoteOne = async (", "\n  const mapCustomNoteError") + "\nglobalThis.one = generateCustomNoteOne;", ctx);
+    return { ctx, sent };
+  }
+  const snap = { distillModel: "deepseek-v4.1-flash-1017", billingModel: "deepseek-v4.1-flash-1017", subjectPosition: "left", infographicTemplateId: null };
+  it("15 万字：请求仍带整份 scriptContext，无摘要字段，不上传", async () => {
+    const { ctx, sent } = oneContext();
+    const text = "## 一\n" + "光合作用。".repeat(30_000);
+    await ctx.one(text, "single_page_knowledge_card", undefined, { index: 1, total: 1 }, "openai", snap, { requestId: randomUUID(), jobId: "kc_a" });
+    expect(sent[0].scriptContext).toBe(text);
+    expect(sent[0]).not.toHaveProperty("manuscriptDigest");
+    expect(sent[0]).not.toHaveProperty("pageBody");
+    expect(ctx.trpcUtils.client.mvAnalysis.stageKnowledgeCardManuscriptChunk.mutate).not.toHaveBeenCalled();
+  });
+  it("超过 20 万字：先暂存，再只带摘要与本页正文；无任何字段超过 20 万字", async () => {
+    const { ctx, sent } = oneContext();
+    const text = Array.from({ length: 400 }, (_, i) => `## 第${i + 1}节\n${"细胞呼吸释放能量。".repeat(70)}`).join("\n\n");
+    expect(text.length).toBeGreaterThan(200_000);
+    const page = pagination.planKnowledgeCardPages(text).pages[1];
+    await ctx.one(text, "single_page_knowledge_card", undefined, { index: 2, total: pagination.planKnowledgeCardPages(text).pageCount }, "openai", snap, { requestId: randomUUID(), jobId: "kc_b" });
+    expect(sent[0]).not.toHaveProperty("scriptContext");
+    expect(sent[0].manuscriptDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(sent[0].pageBody).toBe(page);
+    for (const v of Object.values(sent[0])) if (typeof v === "string") expect(v.length).toBeLessThanOrEqual(200_000);
+    expect(ctx.trpcUtils.client.mvAnalysis.finalizeKnowledgeCardManuscript.mutate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("读档档位下拉：普通用户只见档名（1119 复审）", () => {
+  it("下拉选项与「当前稿件」在非 debug 时经 knowledgeCardPublicTierLabel，且档名不含任何模型/供应商名", async () => {
+    const { KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS, knowledgeCardRecordedModelLabel: label } = await import("../../../shared/knowledgeCardDistillModels");
+    const { knowledgeCardPublicTierLabel } = await import("../components/platform/KnowledgeCardPreflight");
+    for (const o of KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS) {
+      expect(knowledgeCardPublicTierLabel(o.labelZh)).not.toMatch(/deepseek|glm|gpt|gemini|flash|openai|evolink/i);
+      expect(knowledgeCardPublicTierLabel(label(o.id))).not.toMatch(/deepseek|glm|gpt|gemini|flash/i);
+    }
+    expect(knowledgeCardPublicTierLabel(label("some-old-model-id"))).not.toContain("some-old-model-id");
+    const page = readFileSync(new URL("../pages/PlatformPage.tsx", import.meta.url), "utf8");
+    const select = page.slice(page.indexOf("KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.map((o) =>"), page.indexOf("选择框用于下次读档"));
+    expect(select).toContain("canShowPlatformDebug && debugMode ? o.labelZh : knowledgeCardPublicTierLabel(o.labelZh)");
+    expect(select).toContain("knowledgeCardPublicTierLabel(knowledgeCardRecordedModelLabel(customNotePreparedModel))");
+    expect(select).not.toMatch(/\{o\.labelZh\} ·/);
+  });
 });

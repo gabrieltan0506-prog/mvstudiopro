@@ -46,7 +46,7 @@ import {
 import { knowledgeCardImageQuality } from "../../shared/knowledgeCardPagination.js";
 import { resolveGptImage2ProviderOrder } from "../../shared/gptImage2ProviderPricing.js";
 import { isWavespeedGptImage2Configured, postWavespeedGptImage2AndUpload } from "./wavespeedGptImage2.js";
-import type { OpenAiImageVariant } from "../../shared/openaiImageVariant.js";
+import { HANDBOOK_IMAGE_MODEL, HANDBOOK_IMAGE_VARIANT, handbookImageVariantAuthorized, type OpenAiImageVariant } from "../../shared/openaiImageVariant.js";
 import {
   getGptImage2PrimaryTimeoutMs,
   isTimeoutLikeError,
@@ -1141,7 +1141,7 @@ function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverP
  * 传 `referenceImageUrls` 时走 edit；Canvas `generalImageEdit` 不注入封面换脸指令。
  */
 export async function generateGptImage2FromRawEnglishPrompt(options: {
-  beforeImageSubmit?: () => Promise<void>;
+  beforeImageSubmit?: (submitting?: boolean) => Promise<void>;
   englishPrompt: string;
   aspectRatio: "9:16" | "16:9" | "1:1";
   gcsSubdir: string;
@@ -1261,8 +1261,12 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   const openrouterFallbackAllowed =
     String(process.env.GPT_IMAGE2_ALLOW_OPENROUTER_FALLBACK || "").trim() === "1";
   const requireExactVariant = options.requireImageVariant || options.imageModelVersion === "2.6";
+  // 2.6 只有手册与人物换景两处使用，二者都只准 Sunburst（1119 C1）：缺档或 Flare 在任何供应商请求之前拒绝，不再静默落到 Flare。
+  if (options.imageModelVersion === "2.6" && options.openaiImageVariant !== HANDBOOK_IMAGE_VARIANT) {
+    throw new Error("出图只准授权档，未提交出图");
+  }
   const exactModel = options.imageModelVersion === "2.6"
-    ? (options.openaiImageVariant === "sunburst" ? "gpt-image-2.6-sunburst" : "gpt-image-2.6-flare")
+    ? HANDBOOK_IMAGE_MODEL
     : options.exactSunburst ? "gpt-image-2.5-sunburst"
     : options.requireImageVariant ? (options.openaiImageVariant === "sunburst" ? "gpt-image-2.5-sunburst" : "gpt-image-2.5-flare")
     : undefined;
@@ -1327,8 +1331,9 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   const primaryTimeoutMs = getGptImage2PrimaryTimeoutMs();
 
   for (let i = 0; i < providersInOrder.length; i++) {
-    await options.beforeImageSubmit?.();
     const provider = providersInOrder[i]!;
+    // OpenAI 在下载参考图后、实际 POST 前另有提交闸门。
+    await options.beforeImageSubmit?.(provider !== "openai");
     const isPrimary = i === 0;
     const isLast = i === providersInOrder.length - 1 && !tryOpenRouter;
     const tag = provider === "openai" ? "OpenAI" : provider === "wavespeed" ? "WaveSpeed" : "EvoLink";
@@ -1629,6 +1634,7 @@ export async function generatePlatformCompositeSheetImage(options: {
    */
   knowledgeCardImageProvider?: "evolink" | "openai" | "wavespeed";
   /** OpenAI 官方模型档位（flare/sunburst），画布与知识卡共用开关 */
+  approvedImageModel?: typeof HANDBOOK_IMAGE_MODEL;
   openaiImageVariant?: OpenAiImageVariant | null;
   /**
    * 仅 3×4 分段拼接：本次生成是「长图」的第 index/total 段（storyboard/xhs）。
@@ -1645,22 +1651,60 @@ export async function generatePlatformCompositeSheetImage(options: {
     `[2×4·时限] 整链硬上限 ${Math.round(totalMs / 60000)} 分钟（PLATFORM_COMPOSITE_SHEET_JOB_TIMEOUT_MS 可覆寫，≥60000ms）`,
   );
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * 整链硬上限只停止等待，不会中止已发出的供应商请求（上游照出图照扣费）。
+   * 生图调用在途且已越过提交闸门时超时＝结果未知：带 kind="unknown" 上抛，路由转对账而不是退款+可重买，
+   * 避免用户重试同一页再买一次。提交之前超时仍是确定失败。
+   */
+  let imageCallsInFlight = 0;
+  let submissionInFlight = false;
+  let expired = false;
+  const assertWithinDeadline = () => {
+    if (expired) throw Object.assign(new Error("图片任务已超时，停止后续提交"), { kind: "cancelled" });
+  };
+  const checkBeforeSubmit = async () => {
+    assertWithinDeadline();
+    await options.beforeImageSubmit?.();
+    assertWithinDeadline();
+  };
+  const markImageSubmit = async (submitting = true) => {
+    submissionInFlight = false;
+    await checkBeforeSubmit();
+    if (imageCallsInFlight > 0) submissionInFlight = submitting;
+  };
+  const trackImageCall = async <T>(call: () => Promise<T>): Promise<T> => {
+    imageCallsInFlight += 1;
+    try {
+      return await call();
+    } finally {
+      imageCallsInFlight -= 1;
+      if (imageCallsInFlight === 0) submissionInFlight = false;
+    }
+  };
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutHandle = setTimeout(() => {
+      expired = true;
+      const minutes = Math.round(totalMs / 60000);
       reject(
-        new Error(`2×4 分镜/八格合成超时（${Math.round(totalMs / 60000)} 分钟硬上限，已终止）`),
+        submissionInFlight
+          ? Object.assign(new Error(`图片已提交但 ${minutes} 分钟内未确认结果，请恢复原任务核对（不会自动重新购买）`), { kind: "unknown" })
+          : new Error(`2×4 分镜/八格合成超时（${minutes} 分钟硬上限，已终止）`),
       );
     }, totalMs);
   });
 
   const execute = async (): Promise<string | null> => {
-  await options.beforeImageSubmit?.();
+  await checkBeforeSubmit();
   const L = options.flowLog;
   const k = normalizeCompositeSheetKind(options.kind);
   const isStoryboard = k === "storyboard_sheet_landscape";
   const isXhs = k === "xiaohongshu_dual_note";
   const isKnowledgeCard = k === "single_page_knowledge_card";
   const isKnowledgeHandbook = isKnowledgeCard && !options.viralCreation;
+  // 手册配图授权（1119 C1）：服务端绑定 2.6 Sunburst；调用方传来其他档位即在任何占位/供应商请求之前拒绝。
+  if (isKnowledgeHandbook && !handbookImageVariantAuthorized(options.approvedImageModel, options.openaiImageVariant)) {
+    throw new Error("本次配图档位未获授权，未提交出图");
+  }
   const isGraphicPage = isKnowledgeCard && options.viralCreation === true && options.singleGraphicPage === true;
   if (!isStoryboard && !isXhs && !isKnowledgeCard) {
     throw new Error(`Unsupported sheet kind: ${String(k)}`);
@@ -1825,7 +1869,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   let moderationBlocked = false;
 
   for (let attempt = 1; attempt <= compositeMaxAttempts; attempt++) {
-    await options.beforeImageSubmit?.();
+    await checkBeforeSubmit();
     appendImageFlowLog(
       L,
       `[2×4·整链] ═══ 第 ${attempt}/${compositeMaxAttempts} 次尝试开始 ═══`,
@@ -1998,7 +2042,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           options.viralCreation
             ? `[爆款图片·主路径] Image 2.5 Sunburst · 官方→EvoLink · 2K · medium`
             : isKnowledgeCard
-            ? `[图文知识手册·主路径] GPT Image 2.6 ${options.openaiImageVariant || "flare"} · ${options.knowledgeCardImageProvider === "evolink" ? "EvoLink → OpenAI 官方" : "OpenAI 官方 → EvoLink"} · 4K · quality=high · 16:9`
+            ? `[图文知识手册·主路径] ${HANDBOOK_IMAGE_MODEL} · ${options.knowledgeCardImageProvider === "evolink" ? "EvoLink → OpenAI 官方" : "OpenAI 官方 → EvoLink"} · 4K · quality=high · 16:9`
             : `[2×4·主路径] OpenAI/OpenRouter GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
         );
       }
@@ -2009,7 +2053,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         openaiError?: string;
         openrouterError?: string;
       } = {};
-      let fromGpt = await generateGptImage2FromRawEnglishPrompt({
+      let fromGpt = await trackImageCall(() => generateGptImage2FromRawEnglishPrompt({
         englishPrompt: promptForPixel,
         aspectRatio: isGraphicPage ? "9:16" : "16:9",
         gcsSubdir: subdir,
@@ -2020,7 +2064,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         // 图文知识手册：官方优先，同档2.6回落EvoLink；固定high/4K。
         providerOverride: isKnowledgeCard ? (options.knowledgeCardImageProvider || "openai") : undefined,
         imageLane: isKnowledgeCard ? "asset" : undefined,
-        openaiImageVariant: options.openaiImageVariant ?? null,
+        openaiImageVariant: isKnowledgeHandbook ? HANDBOOK_IMAGE_VARIANT : options.openaiImageVariant ?? null,
         imageModelVersion: isKnowledgeHandbook ? "2.6" : undefined,
         ...(options.viralCreation ? XHS_IMAGE_POLICY : {}),
         qualityOverride: options.viralCreation ? "medium" : knowledgeCardQuality,
@@ -2028,8 +2072,8 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         // 0908 用户：官方也出 3840x2160，与 EvoLink 同尺寸，PDF 合成不用补边
         openaiSize: options.viralCreation ? (isGraphicPage ? "1152x2048" : "2048x1152") : isKnowledgeCard ? KNOWLEDGE_CARD_OPENAI_SIZE : undefined,
         captureError: gptCapture,
-        beforeImageSubmit: options.beforeImageSubmit,
-      });
+        beforeImageSubmit: markImageSubmit,
+      }));
 
       // 良性人像误杀：与旧 EvoLink 路径一致，附澄清语境再试一次
       if (
@@ -2040,7 +2084,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
       ) {
         appendImageFlowLog(L, "[2×4·主人公参考] 审核拦截 → 附澄清语境重试一次（OpenAI/OpenRouter）");
         const retryCapture: typeof gptCapture = {};
-        fromGpt = await generateGptImage2FromRawEnglishPrompt({
+        fromGpt = await trackImageCall(() => generateGptImage2FromRawEnglishPrompt({
           englishPrompt: `${promptForPixel}\n${COVER_REFERENCE_BENIGN_CLARIFIER_EN}`,
           aspectRatio: isGraphicPage ? "9:16" : "16:9",
           gcsSubdir: subdir,
@@ -2049,15 +2093,15 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           generalImageEdit: true,
           providerOverride: isKnowledgeCard ? (options.knowledgeCardImageProvider || "openai") : undefined,
           imageLane: isKnowledgeCard ? "asset" : undefined,
-          openaiImageVariant: options.openaiImageVariant ?? null,
+          openaiImageVariant: isKnowledgeHandbook ? HANDBOOK_IMAGE_VARIANT : options.openaiImageVariant ?? null,
           imageModelVersion: isKnowledgeHandbook ? "2.6" : undefined,
           ...(options.viralCreation ? XHS_IMAGE_POLICY : {}),
           qualityOverride: options.viralCreation ? "medium" : knowledgeCardQuality,
           evolinkResolution: options.viralCreation ? "2K" : isKnowledgeCard ? "4K" : undefined,
           openaiSize: options.viralCreation ? (isGraphicPage ? "1152x2048" : "2048x1152") : isKnowledgeCard ? KNOWLEDGE_CARD_OPENAI_SIZE : undefined,
           captureError: retryCapture,
-          beforeImageSubmit: options.beforeImageSubmit,
-        });
+          beforeImageSubmit: markImageSubmit,
+        }));
         if (!fromGpt && (retryCapture.moderationBlocked || isEvolinkModerationFailure(retryCapture.message))) {
           moderationBlocked = true;
           lastFailure = new Error(

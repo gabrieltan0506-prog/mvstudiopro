@@ -21,7 +21,15 @@ function fixture(t,name){
 const fs=require('node:fs');const args=process.argv.slice(2),input=fs.readFileSync(0,'utf8');
 fs.writeFileSync(process.env.CAPTURE,JSON.stringify({args,input}));
 if(process.env.OLD_IMAGE==='1'&&args.at(-1).includes('--scope=verified-archives')){console.error(JSON.stringify({error:'Usage: growth-archive-retire.mjs --scope=bilibili-archives --allow-remote-download < metadata.json'}));process.exit(1);}
-if(process.env.BUSY==='1'){console.error(JSON.stringify({error:'growth_cleanup_busy'}));process.stdout.write(JSON.stringify({error:'growth_cleanup_busy'})+'\\n');process.exit(1);}
+const countFile=process.env.CAPTURE+'.calls';
+const count=fs.existsSync(countFile)?Number(fs.readFileSync(countFile)):0;
+fs.writeFileSync(countFile,String(count+1));
+if(process.env.BUSY==='1'||(process.env.BUSY==='once'&&count===0)){
+ console.error('Connecting to fdaa:50::2...');
+ console.error(JSON.stringify({error:'growth_cleanup_busy',partial:{candidates:61,completed:false,removed:[],removedLogicalBytes:0},buckets:[{state:'failed',retirementCompleted:false,removedFiles:0,removedLogicalBytes:0}]}));
+ console.error('Error: ssh shell: Process exited with status 1');
+ process.exit(1);
+}
 process.stdout.write(JSON.stringify({completed:process.env.FAIL!=='1',removed:2,actualFreeBytesDelta:4096})+'\\n');
 process.exit(process.env.FAIL==='1'?23:0);
 `,{mode:0o755});
@@ -92,7 +100,9 @@ for(const name of files){
   fs.writeFileSync(path.join(f.store,'UPLOAD_EMPTY'),'');
   const payload={batch:f.batch,publication:{batchId:f.batch.batchId,reused:f.publication.uploaded},manifests:{[`archive-${f.dir}.manifest.json`]:Buffer.from(JSON.stringify(f.manifest,null,2)).toString('base64')}};
   fs.writeFileSync(path.join(f.store,'reused-cleanup-input.json'),JSON.stringify(payload));
-  const r=f.run();assert.equal(r.status,0,r.stderr);
+  const r=f.run(undefined,{BUSY:'once',GROWTH_RETIRE_BUSY_WAIT_SECONDS:'0'});assert.equal(r.status,0,r.stderr);
+  assert.equal(fs.readFileSync(f.capture+'.calls','utf8'),'2');
+  assert(!fs.existsSync(path.join(f.store,'RETIREMENT_DEFERRED_reused')));
   const captured=JSON.parse(fs.readFileSync(f.capture));assert.deepEqual(JSON.parse(captured.input),payload);
   assert(fs.existsSync(path.join(f.store,'retirement-result-reused.json')));
  });
@@ -101,8 +111,12 @@ for(const name of files){
   const r=f.run(undefined,{BUSY:'1',GROWTH_RETIRE_BUSY_ATTEMPTS:'2',GROWTH_RETIRE_BUSY_WAIT_SECONDS:'0'});
   assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/第 1 次遇到 growth_cleanup_busy/);
   assert(fs.existsSync(path.join(f.store,'RETIREMENT_DEFERRED_new')));
+  assert.equal(fs.readFileSync(f.capture+'.calls','utf8'),'2');
+  assert.equal(fs.readFileSync(path.join(f.store,'retirement-result-new.json'),'utf8'),'');
   assert(fs.readFileSync(f.summary,'utf8').includes('延后'));
   assert(!fs.readFileSync(f.summary,'utf8').includes('逐文件清理已执行'));
+  const cursor=f.run('Commit archive rotation cursor');assert.equal(cursor.status,0,cursor.stderr);
+  assert.match(JSON.parse(fs.readFileSync(f.capture)).args.at(-1),/commit-cursor '[^']+' ''$/);
  });
  test(`${name}: 仅快照清理成功才建立释放标记`,t=>{
   const f=fixture(t,name);f.seed();fs.unlinkSync(path.join(f.store,'SNAPSHOT_RELEASED'));

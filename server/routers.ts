@@ -1,3 +1,4 @@
+import { HANDBOOK_IMAGE_MODEL, HANDBOOK_IMAGE_VARIANT, handbookImageVariantAuthorized } from "../shared/openaiImageVariant";
 import { markKnowledgeImageFailed } from "./services/knowledgeImageFailure";
 import type { KnowledgeImageRetryReason } from "../shared/knowledgeImageRetry";
 import { resolveKnowledgeCardDistillModel } from "../shared/knowledgeCardDistillModels";
@@ -358,6 +359,24 @@ const PLATFORM_TOPIC_FRAME_TYPE = "platform_topic_frame";
  * 判定逻辑在 services/knowledgeCardPdfExport.ts 的 checkKnowledgeCardExportRate（纯函数，可单测）。
  */
 const knowledgeCardPdfExportHits = new Map<number, number[]>();
+
+/** 1119 C4：暂存原稿调用的错误映射——只给业务句，不带存储细节。 */
+async function handbookManuscriptCall<T>(fn: () => Promise<T>): Promise<T> {
+  const { HandbookManuscriptError } = await import("./services/handbookManuscriptStage");
+  try { return await fn(); }
+  catch (e) {
+    if (e instanceof HandbookManuscriptError) {
+      throw new TRPCError({ code: e.code === "UNAVAILABLE" ? "INTERNAL_SERVER_ERROR" : e.code, message: e.message });
+    }
+    // 存储层原始错误（含桶名、响应体）只进服务端日志，前台只给业务句
+    console.error("[handbookManuscript] storage call failed:", e);
+    throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "原稿暂存暂时不可用，请稍后重试；未扣费、未提交出图" });
+  }
+}
+async function loadStagedHandbookManuscriptOrThrow(userId: number, digest: string): Promise<string> {
+  const { loadHandbookManuscript } = await import("./services/handbookManuscriptStage");
+  return handbookManuscriptCall(() => loadHandbookManuscript(userId, digest));
+}
 
 function parseUserCreationMetadata(raw: string | null | undefined): Record<string, unknown> {
   if (!raw) return {};
@@ -8236,12 +8255,38 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     }),
 
     // 长正文必须放在请求体，避免报价 GET 超过网关 URL 上限。
-    quoteKnowledgeCardForGeneration: protectedProcedure.input(z.object({
+    // 1119 C4：超过 20 万字的原稿先分段暂存，报价只带摘要；服务端取回全文后走同一个 quoteKnowledgeCard（回执/计价不变）。
+    quoteKnowledgeCardForGeneration: protectedProcedure.input(z.union([z.object({
       markdown: z.string().min(1).max(KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS),
       distillModel: z.string().max(64).optional(),
-    }).strict()).mutation(async ({ ctx, input }) => {
+    }).strict(), z.object({
+      manuscriptDigest: z.string().regex(/^[a-f0-9]{64}$/),
+      distillModel: z.string().max(64).optional(),
+    }).strict()])).mutation(async ({ ctx, input }) => {
       const { quoteKnowledgeCard } = await import("./services/knowledgeCardPricing");
-      return quoteKnowledgeCard(Number(ctx.user.id), input.markdown, input.distillModel);
+      const markdown = "markdown" in input ? input.markdown : await loadStagedHandbookManuscriptOrThrow(Number(ctx.user.id), input.manuscriptDigest);
+      return quoteKnowledgeCard(Number(ctx.user.id), markdown, input.distillModel);
+    }),
+
+    /** 1119 C4：大稿分段暂存（≤20 万字/段，按用户 + 原稿 sha256 内容寻址；重复上传幂等，内容不同拒绝覆盖） */
+    stageKnowledgeCardManuscriptChunk: protectedProcedure.input(z.object({
+      digest: z.string().regex(/^[a-f0-9]{64}$/),
+      index: z.number().int().min(0).max(1000),
+      count: z.number().int().min(2).max(1000),
+      totalChars: z.number().int().min(KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS + 1).max(5_000_000),
+      text: z.string().min(1).max(KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS),
+    }).strict()).mutation(async ({ ctx, input }) => {
+      const { stageHandbookManuscriptChunk } = await import("./services/handbookManuscriptStage");
+      return handbookManuscriptCall(() => stageHandbookManuscriptChunk(Number(ctx.user.id), input));
+    }),
+    /** 1119 C4：全部分段到齐后封存；服务端对拼回全文重算 sha256，不一致拒绝。未封存的原稿不能报价、不能出图。 */
+    finalizeKnowledgeCardManuscript: protectedProcedure.input(z.object({
+      digest: z.string().regex(/^[a-f0-9]{64}$/),
+      count: z.number().int().min(2).max(1000),
+      totalChars: z.number().int().min(KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS + 1).max(5_000_000),
+    }).strict()).mutation(async ({ ctx, input }) => {
+      const { finalizeHandbookManuscript } = await import("./services/handbookManuscriptStage");
+      return handbookManuscriptCall(() => finalizeHandbookManuscript(Number(ctx.user.id), input));
     }),
 
     generatePlatformCompositeSheet: protectedProcedure
@@ -8253,7 +8298,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             jobId: z.string().max(128).optional(),
             sceneId: z.string().min(1),
             title: z.string().min(1).max(220),
-            scriptContext: z.string().min(1).max(KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS),
+            /** 旧路径（≤20 万字原稿）：整份正文。与 manuscriptDigest 二选一。 */
+            scriptContext: z.string().min(1).max(KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS).optional(),
+            /** 1119 C4 大稿路径：已封存原稿的 sha256；服务端取回全文并核对本页正文，任务行只存摘要。 */
+            manuscriptDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+            /** 大稿路径：本页正文（须等于 planKnowledgeCardPages(全文).pages[notePageIndex-1]） */
+            pageBody: z.string().min(1).max(KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS).optional(),
             kind: z.enum([
               "storyboard_sheet_portrait",
               "storyboard_sheet_landscape",
@@ -8273,6 +8323,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             /** 仅 single_page_knowledge_card：本页首发供应商（多页并发时页轮流分给两家；另一家自动兜底） */
             imageProvider: z.enum(["evolink", "openai", "wavespeed"]).optional(),
             /** OpenAI 官方模型档位（flare 默认 / sunburst），与画布共用开关 */
+            approvedImageModel: z.literal(HANDBOOK_IMAGE_MODEL).optional(),
             openaiImageVariant: z.enum(["flare", "sunburst"]).optional(),
             /**
              * 仅 single_page_knowledge_card：图文可视化版式 id（`shared/infographicNoteTemplates`）。
@@ -8317,7 +8368,23 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               .optional(),
           })
           .superRefine((data, ctx) => {
-            if ((data.kind !== "single_page_knowledge_card" || data.viralCreation) && data.scriptContext.length > 50000) {
+            // 手册配图授权（1119 C1）：只准 GPT Image 2.6 Sunburst 高质量。校验在 zod 层，早于占位预留与扣费；
+            if (data.approvedImageModel && (data.kind !== "single_page_knowledge_card" || data.viralCreation)) {
+              ctx.addIssue({ code: z.ZodIssueCode.custom, message: "本次模型授权仅适用于手册配图", path: ["approvedImageModel"] });
+            }
+            if (data.kind === "single_page_knowledge_card" && !data.viralCreation && !handbookImageVariantAuthorized(data.approvedImageModel, data.openaiImageVariant)) {
+              ctx.addIssue({ code: z.ZodIssueCode.custom, message: "本次配图档位未获授权，请刷新页面后重新确认；未扣费、未提交出图", path: ["openaiImageVariant"] });
+            }
+            if (Boolean(data.scriptContext) === Boolean(data.manuscriptDigest)) {
+              ctx.addIssue({ code: z.ZodIssueCode.custom, message: "正文与原稿摘要须二选一", path: ["scriptContext"] });
+            }
+            if (data.manuscriptDigest && (data.kind !== "single_page_knowledge_card" || data.viralCreation || !data.pageRequestId || !data.notePageIndex || !data.notePageTotal || !data.pageBody)) {
+              ctx.addIssue({ code: z.ZodIssueCode.custom, message: "原稿摘要仅用于手册逐页出图，须带请求编号、页码与本页正文", path: ["manuscriptDigest"] });
+            }
+            if (!data.manuscriptDigest && data.pageBody !== undefined) {
+              ctx.addIssue({ code: z.ZodIssueCode.custom, message: "本页正文仅用于原稿摘要路径", path: ["pageBody"] });
+            }
+            if ((data.kind !== "single_page_knowledge_card" || data.viralCreation) && (data.scriptContext ?? "").length > 50000) {
               ctx.addIssue({ code: z.ZodIssueCode.custom, message: "分镜与独立图文正文不能超过50000字符", path: ["scriptContext"] });
             }
             if (data.viralCreation && data.kind === "xiaohongshu_dual_note") {
@@ -8355,10 +8422,37 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             }
           }),
       )
-      .mutation(async ({ input, ctx }) => {
+      .mutation(async ({ input: rawInput, ctx }) => {
         const userId = ctx.user.id;
+        /**
+         * 1119 C4：大稿路径在任何占位预留与扣费之前取回已封存全文，并核对本页正文属于这份原稿；
+         * 之后一律以全文作 scriptContext 调用原有的回执查询 / 计价 / 页码校验 / 参考原页 / 出图（哈希与扣费键不变）。
+         * 旧路径 rawInput 原样使用（任务行 params 逐字节不变）。
+         */
+        const stagedManuscript = rawInput.manuscriptDigest
+          ? await loadStagedHandbookManuscriptOrThrow(Number(userId), rawInput.manuscriptDigest)
+          : null;
+        if (stagedManuscript !== null) {
+          const { planKnowledgeCardPages } = await import("../shared/knowledgeCardPagination.js");
+          const plannedBody = planKnowledgeCardPages(stagedManuscript).pages[(rawInput.notePageIndex ?? 0) - 1];
+          if (plannedBody === undefined || plannedBody !== rawInput.pageBody) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "本页正文与已上传原稿不一致，请重新确认；未扣费、未提交出图" });
+          }
+          // 大稿路径：总页数也在占位之前核对（旧路径仍在占位后由 assertKnowledgeCardPageSelection 核对，行为不变）。
+          const plannedTotal = planKnowledgeCardPages(stagedManuscript).pages.length;
+          if (rawInput.notePageTotal !== undefined && rawInput.notePageTotal !== plannedTotal) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "总页数与已上传原稿不一致，请重新确认；未扣费、未提交出图" });
+          }
+          // 大稿路径不接受把结果挂到别的任务或作品记录：否则整份原稿会被写进那一行。
+          if (rawInput.jobId || rawInput.creationRecordId) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "该请求不支持关联其他任务；未扣费、未提交出图" });
+          }
+        }
+        const input = { ...rawInput, scriptContext: stagedManuscript ?? rawInput.scriptContext ?? "" };
+        /** 手册配图：服务端自行绑定授权档，Skill 与前台偏好都改不了（1119 C1） */
+        const handbookImageRequest = input.kind === "single_page_knowledge_card" && !input.viralCreation;
         const imageReservation = input.pageRequestId
-          ? await reserveKnowledgeCardImageJob({ userId: String(userId), requestId: input.pageRequestId, params: { ...input } })
+          ? await reserveKnowledgeCardImageJob({ userId: String(userId), requestId: input.pageRequestId, params: { ...rawInput } })
           : null;
         if (imageReservation && !imageReservation.claimed) {
           return { success: true as const, imageUrl: null, totalCost: 0, kind: input.kind,
@@ -8706,7 +8800,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
               appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
               imageUrl = await generateSheet({
-                viralCreation: input.viralCreation === true || input.enabledSkillIds?.includes("xhs-content-growth") === true,
+                viralCreation: input.viralCreation === true || (input.kind !== "single_page_knowledge_card" && input.enabledSkillIds?.includes("xhs-content-growth") === true),
                 singleGraphicPage: input.singleGraphicPage === true,
                 beforeImageSubmit,
                 kind: input.kind,
@@ -8730,7 +8824,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 subjectPosition: input.subjectPosition,
                 knowledgeCardReferencePageUrls,
                 knowledgeCardImageProvider: input.imageProvider,
-            openaiImageVariant: input.openaiImageVariant,
+            approvedImageModel: input.approvedImageModel,
+            openaiImageVariant: handbookImageRequest ? HANDBOOK_IMAGE_VARIANT : input.openaiImageVariant,
               });
 
               // 第五轮复审 P0·1：空产物不许标成功——扣了费没有图，必须走统一失败退款
@@ -8804,7 +8899,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
           appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
           imageUrl = await generateSheet({
-                viralCreation: input.viralCreation === true || input.enabledSkillIds?.includes("xhs-content-growth") === true,
+                viralCreation: input.viralCreation === true || (input.kind !== "single_page_knowledge_card" && input.enabledSkillIds?.includes("xhs-content-growth") === true),
                 singleGraphicPage: input.singleGraphicPage === true,
             kind: input.kind,
             title: input.title,
@@ -8827,7 +8922,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             subjectPosition: input.subjectPosition,
             knowledgeCardReferencePageUrls,
             knowledgeCardImageProvider: input.imageProvider,
-            openaiImageVariant: input.openaiImageVariant,
+            approvedImageModel: input.approvedImageModel,
+            openaiImageVariant: handbookImageRequest ? HANDBOOK_IMAGE_VARIANT : input.openaiImageVariant,
           });
         } catch (error: any) {
           stopSyncHeartbeat();

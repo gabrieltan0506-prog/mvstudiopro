@@ -252,7 +252,7 @@ export async function postOpenAiGptImage2AndUpload(
     /** Ambiguous submit/upload outcomes must never be retried or refunded as known failures. */
     strictRequest?: boolean;
     persistResponse?: PersistImageResponse;
-    beforeImageSubmit?: () => Promise<void>;
+    beforeImageSubmit?: (submitting?: boolean) => Promise<void>;
     aspectRatio?: "9:16" | "16:9" | "1:1";
     size?: string;
     quality?: string;
@@ -302,7 +302,7 @@ export async function postOpenAiGptImage2AndUpload(
 
   let lastMessage = "";
   for (let i = 0; i < keyChain.length; i++) {
-    await opts.beforeImageSubmit?.();
+    await opts.beforeImageSubmit?.(refs.length === 0);
     const slot = keyChain[i]!;
     // 参考图下载/垫图发生在付费提交前，失败不能误记为待对账。
     let submitted = refs.length === 0;

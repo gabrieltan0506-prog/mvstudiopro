@@ -9,6 +9,23 @@ export type OpenAiImageVariant = "flare" | "sunburst";
 
 export const OPENAI_IMAGE_VARIANT_DEFAULT: OpenAiImageVariant = "flare";
 
+/**
+ * 图文知识手册配图唯一授权档（站长令 1119：只准 GPT Image 2.6 Sunburst 高质量，禁 Flare）。
+ * 手册路径不读前台偏好（偏好为空/缺失时 OPENAI_IMAGE_VARIANT_DEFAULT 会落到 flare）；
+ * 服务端按本常量自行绑定，客户端传来的其他档位一律在建占位与扣费之前拒绝。
+ * 其他业务（画布等）的默认档不受影响。
+ */
+export const HANDBOOK_IMAGE_VARIANT = "sunburst" as const satisfies OpenAiImageVariant;
+export const HANDBOOK_IMAGE_MODEL = "gpt-image-2.6-sunburst" as const;
+export const HANDBOOK_IMAGE_QUALITY = "high" as const;
+/** 普通用户只看到档名；精确模型名只在 debug 面板显示。 */
+export const HANDBOOK_IMAGE_TIER_LABEL_ZH = "高精度档 · 4K";
+
+/** 手册逐页提交必须带本次确认的完整型号；旧偏好不能充当授权。 */
+export function handbookImageVariantAuthorized(model: unknown, variant: unknown): boolean {
+  return model === HANDBOOK_IMAGE_MODEL && (variant == null || variant === HANDBOOK_IMAGE_VARIANT);
+}
+
 export const OPENAI_IMAGE_MODEL_BY_VARIANT: Record<OpenAiImageVariant, string> = {
   flare: "gpt-image-2.5-flare",
   sunburst: "gpt-image-2.5-sunburst",

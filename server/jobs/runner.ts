@@ -3857,6 +3857,16 @@ async function processPlatformJob(
        * 分段提炼 40–90 → 统稿 90–98；终态由 job 状态给出成功/失败。
        */
       const cancel = makeKnowledgeCardCancelWatcher(platformJobId);
+      /**
+       * 1119 F1：分段计时（只给 Debug 面板看）。每个阶段只记第一次出现的时刻；续做沿用旧任务已记的时刻（取最早）。
+       * 仅基于本处已有的进度回调推断，不改任何回调、不发请求；写入失败不影响主流程。
+       */
+      const distillStageAt: Record<string, string> = {};
+      const stampDistillStage = (key: string): boolean => {
+        if (distillStageAt[key]) return false;
+        distillStageAt[key] = new Date().toISOString();
+        return true;
+      };
       const patchProgress = async (patch: Record<string, unknown>) => {
         touchJobHeartbeat(platformJobId);
         await cancel.check();
@@ -3865,6 +3875,16 @@ async function processPlatformJob(
         await (progressWrites = progressWrites.then(() => patchJobRunningProgress(platformJobId, patch).catch(() => {})));
       };
       let progressWrites: Promise<void> = Promise.resolve();
+      const stampAndPatch = (keys: string[], patch: Record<string, unknown>) =>
+        patchProgress(keys.map(stampDistillStage).some(Boolean) ? { ...patch, distillStageAt: { ...distillStageAt } } : patch);
+      try {
+        const row = platformJobId ? await getJobByIdStrict(platformJobId) : null;
+        const created = row?.createdAt ? new Date(row.createdAt as unknown as string) : null;
+        if (created && Number.isFinite(created.getTime())) distillStageAt.jobCreated = created.toISOString();
+        const previous = (row?.output as { distillStageAt?: Record<string, unknown> } | null)?.distillStageAt;
+        if (previous && typeof previous === "object") for (const [k, v] of Object.entries(previous)) if (typeof v === "string" && !distillStageAt[k]) distillStageAt[k] = v;
+      } catch { /* 计时只是诊断，读不到不阻断 */ }
+      stampDistillStage("runnerStarted");
       try {
       await cancel.check({ force: true });
       const { knowledgeCardDistillActivity } = await import("../services/knowledgeCardDistillActivity.js");
@@ -3911,7 +3931,13 @@ async function processPlatformJob(
           // 多文件：每个文件占 0–40 的一等份，第 2 个文件从第 1 个的终点起算，不倒退
           const fileTotal = Math.max(1, p.fileTotal || 1);
           const within = base + span * frac;
-          await patchProgress({
+          // 页文字读完＝读页结束或进入后续阶段；挑页阶段开工意味着拼页缩略图已就绪；挑页结束＝分诊完成
+          const stamps = [
+            ...(p.stage === "reading" && p.total > 0 && p.done >= p.total ? ["textReady"] : []),
+            ...(p.stage === "selecting" || p.stage === "rendering" ? ["textReady", "contactSheetsReady"] : []),
+            ...((p.stage === "selecting" && p.total > 0 && p.done >= p.total) || p.stage === "rendering" ? ["triageDone"] : []),
+          ];
+          await stampAndPatch(stamps, {
             distillStage: p.stage,
             distillStageDone: p.done,
             distillStageTotal: p.total,
@@ -3925,7 +3951,12 @@ async function processPlatformJob(
         },
         onProgress: async (p) => {
           const frac = p.totalChunks > 0 ? Math.min(1, p.doneChunks / p.totalChunks) : 0;
-          await patchProgress({
+          // 首次分段进度＝分段提炼已开始派发（精确的「首个请求发出」不可从这里观察，见报告）；段数到齐＝最后一份报告
+          const stamps = [
+            "textReady", "triageDone", "firstDistillRequest",
+            ...(p.totalChunks > 0 && p.doneChunks >= p.totalChunks ? ["lastDistillReport"] : []),
+          ];
+          await stampAndPatch(stamps, {
             distillPhase: p.phase,
             distillStage: p.phase,
             distillDoneChunks: p.doneChunks,
@@ -3934,7 +3965,7 @@ async function processPlatformJob(
           });
         },
       }));
-      await patchProgress({ distillStage: "finishing", distillPercent: 98 });
+      await stampAndPatch(["lastDistillReport", "distillOutputReady"], { distillStage: "finishing", distillPercent: 98 });
       /**
        * 结算闸门（复审 P2）：落 receipt 与扣费之前强制查一次取消，**不吃轮询间隔缓存**。
        * 这一刻之后就进入不可取消阶段：取消接口那边看到 running 只登记请求，
@@ -3962,6 +3993,8 @@ async function processPlatformJob(
         credits: plan.credits,
         pages: plan.pages,
         epubPdfs: prepared.convertedPdfs,
+        // 1119 F1：分段计时随成品保留（仅 Debug 面板读取）；不进任何摘要/扣费键
+        distillStageAt: { ...distillStageAt },
       };
       return await finishKnowledgeCardProduction(platformJobId!, Number(jobUserId), {
         version: 1, output,

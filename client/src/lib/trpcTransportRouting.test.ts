@@ -27,6 +27,11 @@ it("真实tRPC批准请求直连Fly，失败不重发，下一次显式点击才
   expect(useLongTrpcHttpLink({path:'auth.me'})).toBe(false);
 });
 
+it("手册大稿分段与封存直连鉴权 Fly（与报价同一长请求通道），不经 Vercel 反代批量链路", () => {
+  for (const path of ["mvAnalysis.stageKnowledgeCardManuscriptChunk", "mvAnalysis.finalizeKnowledgeCardManuscript", "mvAnalysis.quoteKnowledgeCardForGeneration", "mvAnalysis.generatePlatformCompositeSheet"])
+    expect(useLongTrpcHttpLink({ path })).toBe(true);
+});
+
 it("来源检查保留完整链接和鉴权直连，网关非JSON一次失败并保留HTTP证据", async () => {
   clearApiDebugErrors();
   const source = 'https://www.douyin.com/user/MS4wLjABAAAA9ARsInHogB08ESkWQLKDJ1LQdR2WIZeVXglbaDLntqU?from_tab_name=main&modal_id=7693257165578013992&vid=7693519123195743538';
