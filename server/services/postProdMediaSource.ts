@@ -14,7 +14,7 @@
  * 以及本人 succeeded 任务 output 明确产物字段里逐字全等的 https 直链
  * (整集合成落 Vercel Blob、第三方引擎 CDN 产物都在此列;仍限本人产物,下载禁跳转、有体积上限)。
  */
-import { and, asc, eq, gt, inArray } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { jobs } from "../../drizzle/schema";
 import { getDb } from "../db";
 import {
@@ -185,6 +185,15 @@ export async function loadSucceededJobOutputObjects(
  * 入队与 worker 各调一次解析，这里不再各扫一遍库。
  */
 const SUCCEEDED_OUTPUT_PAGE_SIZE = 150;
+/**
+ * 只取 output 里被认作产物的那几个顶层字段，不把整份 output 拉回来。
+ * 2026-11-21 真实阻断：大书的提炼/两档成稿任务把数 MB 的正文存在 output 里，一页 150 行的整份 output 超出数据库单次响应上限，
+ * 「Failed query: select id, output from jobs …」→ 排版稿每次保存都 503，审校做完存不进云端、后续批次派不出去。
+ * 归属判断只用到这些字段（见 collectDeclaredMediaSources），取字段子集与取整份 output 得到的产物集合完全相同。
+ * output 不是对象（历史行以 JSON 字符串存）时原样返回，由 collectDeclaredMediaSources 照旧解析。
+ */
+const MEDIA_OUTPUT_FIELDS: readonly string[] = [...MEDIA_SCALAR_FIELDS, ...MEDIA_ARRAY_FIELDS];
+const declaredMediaOutput = sql<unknown>`case when json_typeof(${jobs.output}) = 'object' then coalesce((select json_object_agg(e.key, e.value) from json_each(${jobs.output}) as e(key, value) where e.key in (${sql.join(MEDIA_OUTPUT_FIELDS.map(field => sql`${field}`), sql`, `)})), '{}'::json) else ${jobs.output} end`;
 export async function loadSucceededJobOutputSources(
   userId: string,
   bucket: string,
@@ -198,7 +207,7 @@ export async function loadSucceededJobOutputSources(
   let after = "";
   for (;;) {
     const rows = await db
-      .select({ id: jobs.id, output: jobs.output })
+      .select({ id: jobs.id, output: declaredMediaOutput })
       .from(jobs)
       .where(and(eq(jobs.userId, userId), eq(jobs.status, "succeeded"), gt(jobs.id, after)))
       .orderBy(asc(jobs.id))
@@ -240,7 +249,7 @@ export async function loadSucceededJobOutputSourcesForJobs(
   if (!db) throw new Error("数据库暂时不可用,请稍后再试");
   for (let i = 0; i < ids.length; i += SUCCEEDED_OUTPUT_PAGE_SIZE) {
     const rows = await db
-      .select({ id: jobs.id, output: jobs.output })
+      .select({ id: jobs.id, output: declaredMediaOutput })
       .from(jobs)
       .where(and(eq(jobs.userId, userId), eq(jobs.status, "succeeded"), inArray(jobs.id, ids.slice(i, i + SUCCEEDED_OUTPUT_PAGE_SIZE))));
     for (const row of rows) {
