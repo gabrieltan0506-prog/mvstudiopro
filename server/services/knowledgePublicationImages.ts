@@ -4,15 +4,25 @@ import { planKnowledgeCardPages } from "../../shared/knowledgeCardPagination";
 import type { KnowledgeSource, KnowledgePublication } from "../../shared/knowledgePublication";
 import { getJobByIdStrict } from "../jobs/repository";
 import { getGcsBucketName } from "./gcs";
-import { resolveRegisteredPostProdMediaSource, loadSucceededJobOutputSources } from "./postProdMediaSource";
+import { resolveRegisteredPostProdMediaSource, loadSucceededJobOutputSourcesForJobs } from "./postProdMediaSource";
 
-/** 权威登记仅在单次解析调用内复用，不跨用户或跨请求缓存。 */
+/** 本次解析要核对的配图任务编号（按补图绑定换算后）；与 resolveKnowledgePublicationImages 读取的任务一一对应。 */
+export function knowledgePublicationImageJobIds(source: KnowledgeSource, indexes?: readonly number[], replacements: Record<string, string> = {}) {
+  return Array.from(new Set(source.pages.flatMap((page, i) => !page.imageJobId || (indexes && !indexes.includes(i)) ? [] : [replacements[page.imageJobId] || page.imageJobId])));
+}
+
+/**
+ * 权威登记仅在单次解析调用内复用，不跨用户或跨请求缓存。
+ * 只按本次配图任务编号定向读取（本人 + 已成功 + 明确产物字段，只取 id/output 两列），不再整表扫描本人全部成功任务。
+ * 等价性：配图地址取自同一任务的 compositeImageUrl/imageUrl（均属明确产物字段），全表版里能让它通过的登记项必来自该任务；
+ * 定向集合是全表集合的子集，前缀放行与画布登记簿验主仍走原 resolveRegisteredPostProdMediaSource，不放宽。
+ */
 function createKnowledgePublicationImageDeps() {
-  let pending: ReturnType<typeof loadSucceededJobOutputSources> | undefined;
+  let pending: ReturnType<typeof loadSucceededJobOutputSourcesForJobs> | undefined;
   return {
     job: getJobByIdStrict,
-    canonical: async (owner: number, url: string) => {
-      pending ??= loadSucceededJobOutputSources(String(owner), getGcsBucketName());
+    canonical: async (owner: number, url: string, jobIds: readonly string[]) => {
+      pending ??= loadSucceededJobOutputSourcesForJobs(String(owner), getGcsBucketName(), jobIds);
       const sources = await pending;
       return resolveRegisteredPostProdMediaSource({userId:String(owner),source:url},undefined,{jobObjects:sources.objects,jobUrls:sources.urls});
     },
@@ -20,7 +30,8 @@ function createKnowledgePublicationImageDeps() {
 }
 
 /** 只读取已保存的本人图片任务；绝不从整理链新建/重试图片任务。 */
-export async function resolveKnowledgePublicationImages(owner: number, source: KnowledgeSource, indexes?: readonly number[], deps = createKnowledgePublicationImageDeps(), replacements: Record<string, string> = {}): Promise<KnowledgeSource> {
+export async function resolveKnowledgePublicationImages(owner: number, source: KnowledgeSource, indexes?: readonly number[], deps: { job: typeof getJobByIdStrict; canonical: (owner: number, url: string, jobIds: readonly string[]) => Promise<string> } = createKnowledgePublicationImageDeps(), replacements: Record<string, string> = {}): Promise<KnowledgeSource> {
+  const jobIds = knowledgePublicationImageJobIds(source, indexes, replacements);
   const pages = await Promise.all(source.pages.map(async (page, i) => {
     if (!page.imageJobId || (indexes && !indexes.includes(i))) return page;
     const job = await deps.job(replacements[page.imageJobId] || page.imageJobId);
@@ -34,7 +45,7 @@ export async function resolveKnowledgePublicationImages(owner: number, source: K
     const output = job.output as { compositeImageUrl?: string; imageUrl?: string } | null;
     const url = output?.compositeImageUrl || output?.imageUrl;
     if (!url) throw new Error("配图任务没有有效图片，未执行空图审校");
-    return { ...page, imageUrl: await deps.canonical(owner, url) };
+    return { ...page, imageUrl: await deps.canonical(owner, url, jobIds) };
   }));
   return { ...source, pages };
 }

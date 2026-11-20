@@ -74,7 +74,7 @@ import * as imageStore from './gcs';
 it('整册图片共享本次权威登记读取，不跨下一次请求缓存', async()=>{
  const job=vi.spyOn(imageJobs,'getJobByIdStrict').mockImplementation(async id=>({userId:'7',status:'succeeded',input:{action:'platform_composite_sheet_progress',params:{kind:'single_page_knowledge_card'}},output:{imageUrl:'gs://test/generated/7/'+id+'.png'}}) as any);
  const bucket=vi.spyOn(imageStore,'getGcsBucketName').mockReturnValue('test');
- const sources=vi.spyOn(sourceRegistry,'loadSucceededJobOutputSources').mockResolvedValue({objects:new Set(),urls:new Set()});
+ const sources=vi.spyOn(sourceRegistry,'loadSucceededJobOutputSourcesForJobs').mockResolvedValue({objects:new Set(),urls:new Set()});
  const canonical=vi.spyOn(sourceRegistry,'resolveRegisteredPostProdMediaSource').mockImplementation(async input=>input.source);
  try{
   const many={...source,pages:Array.from({length:48},(_,i)=>({...source.pages[0],id:String(i),imageJobId:'job-'+i}))};

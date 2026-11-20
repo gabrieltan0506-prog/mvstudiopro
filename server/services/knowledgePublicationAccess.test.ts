@@ -5,7 +5,7 @@ const state=vi.hoisted(()=>({doc:null as any,previous:null as any}));
 vi.mock("./editableLayoutStore",()=>({readCanonicalLayoutLibrary:vi.fn(async(owner:number)=>({library:owner===7?{documents:[state.doc]}:{documents:[]}}))}));
 vi.mock("../credits",()=>({readChargeRefundState:vi.fn(async()=>({charged:0,settled:true}))}));
 vi.mock("../jobs/repository",()=>({getJobByIdStrict:vi.fn(async()=>state.previous)}));
-vi.mock("./postProdMediaSource",()=>({loadSucceededJobOutputSources:vi.fn(async()=>({objects:new Set(),urls:new Set()})),resolveRegisteredPostProdMediaSource:vi.fn(async()=>{throw new Error("配图不属于本人");})}));
+vi.mock("./postProdMediaSource",()=>({loadSucceededJobOutputSourcesForJobs:vi.fn(async()=>({objects:new Set(),urls:new Set()})),resolveRegisteredPostProdMediaSource:vi.fn(async()=>{throw new Error("配图不属于本人");})}));
 import {validateKnowledgePublicationAccess} from "./knowledgePublicationAdvisor";
 describe("审校归属与重试扣费门禁",()=>{
  beforeEach(()=>{state.doc=layoutFromSource({kind:"knowledge-publication",owner:"7",sourceId:"test",title:"知识",body:"事实说明"});state.previous=null;});

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 const state = vi.hoisted(() => ({ jobs: new Map<string, any>(), reads: [] as string[] }));
 vi.mock("../jobs/repository", async importOriginal => ({ ...await importOriginal<any>(), getJobByIdStrict: vi.fn(async (id: string) => { state.reads.push(id); return state.jobs.get(id) || null; }) }));
 vi.mock("./gcs", async importOriginal => ({ ...await importOriginal<any>(), getGcsBucketName: () => "test", signGsUriV4ReadUrl: (uri: string) => uri.replace("gs://", "https://storage.googleapis.com/") }));
-vi.mock("./postProdMediaSource", async importOriginal => ({ ...await importOriginal<any>(), loadSucceededJobOutputSources: async () => ({ objects: new Set(), urls: new Set() }), resolveRegisteredPostProdMediaSource: async ({ source }: { source: string }) => source.replace("https://storage.googleapis.com/", "gs://") }));
+vi.mock("./postProdMediaSource", async importOriginal => ({ ...await importOriginal<any>(), loadSucceededJobOutputSources: async () => ({ objects: new Set(), urls: new Set() }), loadSucceededJobOutputSourcesForJobs: async () => ({ objects: new Set(), urls: new Set() }), resolveRegisteredPostProdMediaSource: async ({ source }: { source: string }) => source.replace("https://storage.googleapis.com/", "gs://") }));
 import { synchronizedKnowledgeCardSource } from "../../shared/knowledgeCardEditableLayout";
 import { layoutFromSource } from "../../shared/editableLayout";
 import { knowledgeManuscript, knowledgeReviewSchema } from "../../shared/knowledgePublication";
