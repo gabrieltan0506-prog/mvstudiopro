@@ -9,7 +9,7 @@ import {KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST} from './knowledgeModelCapabilities';
 import {verifyKnowledgeEditionManuscriptsDetailed} from './knowledgeEditionFinalVerification';
 import {nameKnowledgeEditionTopics} from './knowledgeTopicTitles';
 
-import {deriveKnowledgeCardCompact} from './knowledgeCardLevelDerive';
+import {deriveKnowledgeCardCompact,KNOWLEDGE_SELECTION_ALLOCATION} from './knowledgeCardLevelDerive';
 import {createHash} from 'node:crypto';
 import {compileKnowledgeEditions,knowledgeModulesFromMarkdown} from '../../shared/knowledgeCardEdition';
 
@@ -162,7 +162,9 @@ export async function prepareKnowledgeCardEditions(params:{
   const previousSource = await evidence.read(`${evidence.prefix}/source.json`);
   if (previousSource && previousSource.compositionVersion !== EDITION_COMPOSITION_VERSION)
     throw Error('旧任务缺少疑点识别版本证据，保留原回执，不自动复用或重新购买');
-  await evidence.save(`${evidence.prefix}/source.json`,{inputDigest,markdown:sourceMarkdown,compositionVersion:EDITION_COMPOSITION_VERSION});
+  // 选节分配版本：新建任务写入 remainder-v1；已有 source.json 而无此标记的旧任务续跑仍用旧分配，逐批选节请求与已存回执身份不变。
+  const selectionAllocation=previousSource&&previousSource.selectionAllocation!==KNOWLEDGE_SELECTION_ALLOCATION?undefined:KNOWLEDGE_SELECTION_ALLOCATION;
+  await evidence.save(`${evidence.prefix}/source.json`,{inputDigest,markdown:sourceMarkdown,compositionVersion:EDITION_COMPOSITION_VERSION,...(selectionAllocation?{selectionAllocation}:{})});
   const selectionQuestions = new Set<string>();
   const selectChat:NonNullable<Parameters<typeof deriveKnowledgeCardCompact>[0]['chat']>=async call=>{
     params.abortSignal?.throwIfAborted();
@@ -235,7 +237,7 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
         sections:selectedIndices.size,targetSections:savedSelection.targetSections,passes:savedSelection.passes};
     }else{
       selection=await deriveKnowledgeCardCompact({fullMarkdown:fullSource,model:params.model,targetSections:params.targetSections,
-        abortSignal:params.abortSignal,onProgress:params.onProgress,chat:selectChat});
+        abortSignal:params.abortSignal,onProgress:params.onProgress,chat:selectChat,allocation:selectionAllocation});
       const selected=knowledgeModulesFromMarkdown(selection.markdown).modules;
       for(const choice of selected){
         const candidates=modules.map((m,i)=>({m,i})).filter(({m,i})=>m.headline===choice.headline&&!selectedIndices.has(i));
