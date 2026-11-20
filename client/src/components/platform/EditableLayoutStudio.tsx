@@ -647,6 +647,16 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
             >
               保存云端
             </button>
+            {doc?.publication && !doc.publication.review ? (
+              // 站长 2026-11-21：继续自动审校紧挨「保存云端」，不用翻到排版面板里找。由当前稿的排版面板接手执行（与面板内同名按钮是同一个动作）。
+              <button
+                className={button}
+                disabled={!ready || !cloudReady || busy}
+                onClick={() => window.dispatchEvent(new CustomEvent("knowledge-publication-resume", { detail: { documentId: doc.id } }))}
+              >
+                继续自动审校
+              </button>
+            ) : null}
             <button
               className={button}
               disabled={!ready || busy}

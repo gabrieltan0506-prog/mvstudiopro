@@ -497,6 +497,14 @@ export default function KnowledgePublicationPanel({
       locked(false);
     }
   };
+  // 工作室工具条「保存云端」旁的「继续自动审校」：与面板内按钮同一动作；忙碌时忽略，只响应当前稿。
+  const resumeFromToolbar = useRef(() => {});
+  resumeFromToolbar.current = () => { if (!busy) void run(terminal); };
+  useEffect(() => {
+    const onResume = (event: Event) => { if ((event as CustomEvent<{ documentId?: string }>).detail?.documentId === doc.id) resumeFromToolbar.current(); };
+    window.addEventListener("knowledge-publication-resume", onResume);
+    return () => window.removeEventListener("knowledge-publication-resume", onResume);
+  }, [doc.id]);
   useEffect(() => {
     const key = `${doc.id}:${autoStartToken}`;
     if (autoStart && started.current !== key && (!doc.publication?.review || (doc.publication.automaticLayout && !doc.publication.layoutConversationId))) {
