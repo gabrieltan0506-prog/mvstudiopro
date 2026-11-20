@@ -722,7 +722,7 @@ export default function KnowledgePublicationPanel({
       {(stage || message || error || !review || progressLog.length > 0) && (
         <section aria-label="手册处理进度" className="space-y-2 rounded-xl border border-[#b9c4ad]/40 bg-[#1f3329] p-4">
           <h5 className="text-sm font-semibold text-[#d7e6c4]">处理进度</h5>
-          <KnowledgePublicationStageDetail stage={stage} error={error} />
+          <KnowledgePublicationStageDetail stage={stage} error={error} bar />
           {stage && (
             <p aria-label="手册处理阶段" className="text-xs text-[#c0cabb]">
               {knowledgeStageLabel(stage)}

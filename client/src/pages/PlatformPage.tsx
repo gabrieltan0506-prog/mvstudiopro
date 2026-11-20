@@ -351,7 +351,7 @@ import {
   type KnowledgeCardProgressState,
 } from "@/components/platform/KnowledgeCardProgress";
 import { createKnowledgeLayoutGate, knowledgeLayoutAskVisible, readKnowledgeLayoutChoice, writeKnowledgeLayoutChoice, type KnowledgeLayoutChoice, type KnowledgeLayoutGate } from "@/lib/knowledgeLayoutAskGate";
-import { knowledgeHandbookOverallProgress } from "@/lib/knowledgeHandbookOverallProgress";
+import { KnowledgeHandbookOverallProgressLive } from "@/components/platform/KnowledgeHandbookOverallProgressLive";
 import { KnowledgePublicationStageDetail } from "@/components/platform/KnowledgePublicationStageDetail";
 import type { KnowledgePublicationStage } from "@/lib/knowledgePublicationStage";
 import {
@@ -14953,14 +14953,12 @@ export default function PlatformPage() {
                     onConfirm={() => closeKnowledgeCardPreflight(true)}
                     onCancel={() => closeKnowledgeCardPreflight(false)}
                   />
-                  <KnowledgeCardProgress
-                    state={knowledgeHandbookOverallProgress({
-                      base: customNoteProgress,
-                      decision: knowledgeLayoutPending && knowledgeLayoutPending.sourceId === knowledgeCardLayoutSourceIdRef.current ? "pending"
-                        : knowledgeLayoutChosen && knowledgeLayoutChosen.sourceId === knowledgeCardLayoutSourceIdRef.current ? knowledgeLayoutChosen.choice : "not_applicable",
-                      stage: knowledgePublicationStage && knowledgePublicationStage.sourceId === knowledgeCardLayoutSourceIdRef.current ? knowledgePublicationStage.stage : null,
-                      layoutError: knowledgePublicationStage && knowledgePublicationStage.sourceId === knowledgeCardLayoutSourceIdRef.current ? knowledgePublicationStage.error || null : null,
-                    })}
+                  <KnowledgeHandbookOverallProgressLive
+                    base={customNoteProgress}
+                    decision={knowledgeLayoutPending && knowledgeLayoutPending.sourceId === knowledgeCardLayoutSourceIdRef.current ? "pending"
+                        : knowledgeLayoutChosen && knowledgeLayoutChosen.sourceId === knowledgeCardLayoutSourceIdRef.current ? knowledgeLayoutChosen.choice : "not_applicable"}
+                    stage={knowledgePublicationStage && knowledgePublicationStage.sourceId === knowledgeCardLayoutSourceIdRef.current ? knowledgePublicationStage.stage : null}
+                    layoutError={knowledgePublicationStage && knowledgePublicationStage.sourceId === knowledgeCardLayoutSourceIdRef.current ? knowledgePublicationStage.error || null : null}
                     onCancel={customNoteDistillJobId || customNoteRendering ? cancelCustomNoteDistill : undefined}
                     cancelBusy={customNoteCancelBusy || customNoteCancelRequested}
                   />

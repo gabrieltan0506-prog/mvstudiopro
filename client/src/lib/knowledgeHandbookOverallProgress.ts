@@ -18,6 +18,8 @@ export function knowledgeHandbookOverallProgress(input: {
   stage: KnowledgePublicationStage | null;
   layoutError?: string | null;
   layoutStopped?: boolean;
+  /** 当前排版步已用时（毫秒）：没有计数的步据此估算步内进度，让总进度条持续前进。 */
+  stageElapsedMs?: number;
 }): KnowledgeCardProgressState {
   const { base, decision, stage } = input;
   // 出图未成功收口（进行中、失败、已停止）或不涉及排版选择：原样显示。
@@ -25,7 +27,7 @@ export function knowledgeHandbookOverallProgress(input: {
   if (decision === "images_only") return { ...base, status: "succeeded", percent: 100 };
   if (decision === "pending")
     return { status: "running", percent: KNOWLEDGE_IMAGES_DONE_PERCENT, label: "图片已全部完成，等待选择是否排版成册" };
-  const progress = knowledgeStageProgress(stage);
+  const progress = knowledgeStageProgress(stage, input.layoutError ? undefined : input.stageElapsedMs);
   const percent = KNOWLEDGE_IMAGES_DONE_PERCENT + Math.round(((100 - KNOWLEDGE_IMAGES_DONE_PERCENT) * (progress?.percent ?? 0)) / 100);
   if (input.layoutError)
     return { status: input.layoutStopped ? "stopped" : "failed", percent, label: `排版成册 · ${progress?.stepName ?? "准备中"}`, error: input.layoutError };

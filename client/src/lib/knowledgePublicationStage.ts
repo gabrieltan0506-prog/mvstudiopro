@@ -40,14 +40,25 @@ export async function loadKnowledgePreviewWithRetry<T>(fetch: () => Promise<T>, 
  */
 export const KNOWLEDGE_PUBLICATION_STAGE_WEIGHTS = [60, 15, 10, 15] as const;
 /** 由前台阶段得到排版总进度：步内按 done/total 线性，没有计数的步按该步起点计；全部完成为 100。 */
-export function knowledgeStageProgress(stage: KnowledgePublicationStage | null): { percent: number; stepNumber: number; stepTotal: number; stepName: string; stepDone?: number; stepCount?: number; finished: boolean } | null {
+/**
+ * 没有计数的步（统稿、版面审查与 PDF，以及整册排版分组前的准备）按本步已用时估算步内进度（站长 2026-11-21：进度条不能停着不动）：
+ * 渐近到本步的 90%，永远不会自己走满——真正走到下一步仍只由实际完成决定。各步的时间常数为经验值（毫秒）。
+ */
+export const KNOWLEDGE_STAGE_ESTIMATE_TAU_MS = [240_000, 240_000, 180_000, 120_000] as const;
+export function knowledgeStageEstimatedFraction(step: number, elapsedMs: number | undefined) {
+  const tau = KNOWLEDGE_STAGE_ESTIMATE_TAU_MS[step];
+  if (!tau || !Number.isFinite(elapsedMs) || Number(elapsedMs) <= 0) return 0;
+  return 0.9 * (1 - Math.exp(-Number(elapsedMs) / tau));
+}
+export function knowledgeStageProgress(stage: KnowledgePublicationStage | null, elapsedMs?: number): { percent: number; stepNumber: number; stepTotal: number; stepName: string; stepDone?: number; stepCount?: number; finished: boolean; estimated?: boolean } | null {
   if (!stage) return null;
   const stepTotal = KNOWLEDGE_PUBLICATION_STAGES.length;
   if (stage.step >= stepTotal) return { percent: 100, stepNumber: stepTotal, stepTotal, stepName: KNOWLEDGE_PUBLICATION_STAGES[stepTotal - 1]!, finished: true };
   const step = Math.max(0, Math.floor(stage.step));
   const before = KNOWLEDGE_PUBLICATION_STAGE_WEIGHTS.slice(0, step).reduce((sum: number, weight) => sum + weight, 0);
   const counted = Number.isFinite(stage.total) && Number(stage.total) > 0;
-  const fraction = counted ? Math.max(0, Math.min(1, Number(stage.done ?? 0) / Number(stage.total))) : 0;
+  const estimated = !counted && knowledgeStageEstimatedFraction(step, elapsedMs) > 0;
+  const fraction = counted ? Math.max(0, Math.min(1, Number(stage.done ?? 0) / Number(stage.total))) : knowledgeStageEstimatedFraction(step, elapsedMs);
   const percent = Math.min(99, Math.round(before + KNOWLEDGE_PUBLICATION_STAGE_WEIGHTS[step]! * fraction));
-  return { percent, stepNumber: step + 1, stepTotal, stepName: KNOWLEDGE_PUBLICATION_STAGES[step]!, ...(counted ? { stepDone: Number(stage.done ?? 0), stepCount: Number(stage.total) } : {}), finished: false };
+  return { percent, stepNumber: step + 1, stepTotal, stepName: KNOWLEDGE_PUBLICATION_STAGES[step]!, ...(counted ? { stepDone: Number(stage.done ?? 0), stepCount: Number(stage.total) } : {}), finished: false, ...(estimated ? { estimated: true } : {}) };
 }
