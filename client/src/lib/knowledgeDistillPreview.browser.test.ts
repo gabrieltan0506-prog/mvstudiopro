@@ -53,7 +53,7 @@ it("恢复后连续翻页，读失败按原游标重试，切换任务忽略迟�
       throw new Error(`未加载全部预览 ${JSON.stringify(state)}`, { cause: error });
     });
     expect(await page.evaluate(() => (window as any).calls)).toEqual([["old",0],["book",0],["book",0],["book",8],["book",16]]);
-    expect(await page.evaluate(() => [...document.querySelectorAll("article strong")].map(n => n.textContent)))
+    expect(await page.evaluate(() => Array.from(document.querySelectorAll("article strong")).map(n => n.textContent)))
       .toEqual(Array.from({ length: 24 }, (_, i) => "book" + i));
   } finally { await browser.close(); }
 }, 120_000);
