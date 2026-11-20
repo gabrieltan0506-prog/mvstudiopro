@@ -27,6 +27,8 @@ import {
   knowledgePublicationChapter,
 } from "@shared/knowledgePublicationHtml";
 import { trpc } from "@/lib/trpc";
+import { runAfterKnowledgeLayoutDecision } from "@/lib/knowledgeLayoutAskGate";
+import { KnowledgePublicationStageDetail } from "./KnowledgePublicationStageDetail";
 import { KNOWLEDGE_PREVIEW_UNAVAILABLE, KNOWLEDGE_PUBLICATION_STAGES, knowledgeStageLabel, loadKnowledgePreviewWithRetry, type KnowledgePublicationStage } from "@/lib/knowledgePublicationStage";
 import { withKnowledgeAdvisorRecovery } from "@/lib/knowledgeAdvisorRecovery";
 import { streamManhuaAdvisor } from "@/lib/manhuaAdvisorStream";
@@ -48,6 +50,8 @@ export default function KnowledgePublicationPanel({
   autoPreparePresentation = false,
   preauthorizedPresentationCredits,
   waitForImages,
+  waitForLayoutDecision,
+  onStage,
   waitForReading,
   onPagination,
   onSupplement,
@@ -64,6 +68,10 @@ export default function KnowledgePublicationPanel({
   autoPreparePresentation?: boolean;
   preauthorizedPresentationCredits?: number;
   waitForImages?: (ids: string[]) => Promise<void>;
+  /** 图片出完后再问（2026-11-21）：有值时自动开始前先等用户选择，只有「排版成册」才启动原流程。 */
+  waitForLayoutDecision?: () => Promise<import("@/lib/knowledgeLayoutAskGate").KnowledgeLayoutChoice>;
+  /** 排版四步的当前阶段与失败说明（2026-11-21：排版进度进入手册总体进度条）。 */
+  onStage?: (stage: KnowledgePublicationStage | null, error: string) => void;
   waitForReading?: () => Promise<void>;
   onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>;
   onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void;
@@ -135,6 +143,8 @@ export default function KnowledgePublicationPanel({
   const [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
     [error, setError] = useState("");
+  const reportStage = useRef(onStage); reportStage.current = onStage;
+  useEffect(() => { reportStage.current?.(stage, error); }, [stage, error]);
   // 进度记录（1113 站长令：排版内容框与进度分开，最新在上）：只记录前台已显示过的进度句，纯展示，不影响任务。
   const [progressLog, setProgressLog] = useState<{ at: string; text: string }[]>([]);
   useEffect(() => {
@@ -487,11 +497,20 @@ export default function KnowledgePublicationPanel({
       locked(false);
     }
   };
+  // 工作室工具条「保存云端」旁的「继续自动审校」：与面板内按钮同一动作；忙碌时忽略，只响应当前稿。
+  const resumeFromToolbar = useRef(() => {});
+  resumeFromToolbar.current = () => { if (!busy) void run(terminal); };
+  useEffect(() => {
+    const onResume = (event: Event) => { if ((event as CustomEvent<{ documentId?: string }>).detail?.documentId === doc.id) resumeFromToolbar.current(); };
+    window.addEventListener("knowledge-publication-resume", onResume);
+    return () => window.removeEventListener("knowledge-publication-resume", onResume);
+  }, [doc.id]);
   useEffect(() => {
     const key = `${doc.id}:${autoStartToken}`;
     if (autoStart && started.current !== key && (!doc.publication?.review || (doc.publication.automaticLayout && !doc.publication.layoutConversationId))) {
       started.current = key;
-      void run();
+      // 闸在自动开始之前：选择前不进忙碌态、不发任何整理请求；选「只要图片」直接结束，不报错。
+      void runAfterKnowledgeLayoutDecision(waitForLayoutDecision, () => run(), () => alive.current && started.current === key);
     }
   }, [autoStart, autoStartToken, doc.id]);
   const planPptx = async (retryFailed = false, automatic = false, finalReview = false) => {
@@ -688,6 +707,7 @@ export default function KnowledgePublicationPanel({
       {(stage || message || error || !review || progressLog.length > 0) && (
         <section aria-label="手册处理进度" className="space-y-2 rounded-xl border border-[#b9c4ad]/40 bg-[#1f3329] p-4">
           <h5 className="text-sm font-semibold text-[#d7e6c4]">处理进度</h5>
+          <KnowledgePublicationStageDetail stage={stage} error={error} />
           {stage && (
             <p aria-label="手册处理阶段" className="text-xs text-[#c0cabb]">
               {knowledgeStageLabel(stage)}

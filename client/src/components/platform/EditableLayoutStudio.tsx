@@ -58,11 +58,13 @@ export type EditableLayoutStudioHandle = {
   attachImage: (originalJobId: string, replacementJobId: string, resume: boolean) => Promise<void>;
 };
 /** 按账号恢复，条件写入防止旧会话覆盖新稿。 */
-const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: string; source: LayoutSource | null; readingView?:ReactNode; compact?: boolean; onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void }>(function EditableLayoutStudio({
+const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: string; source: LayoutSource | null; readingView?:ReactNode; compact?: boolean; onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void; layoutDecision?: (doc: EditableLayout) => Promise<import("@/lib/knowledgeLayoutAskGate").KnowledgeLayoutChoice> | undefined; onPublicationStage?: (doc: EditableLayout, stage: import("@/lib/knowledgePublicationStage").KnowledgePublicationStage | null, error: string) => void }>(function EditableLayoutStudio({
   owner,
   source,
   readingView,
   onPagination,
+  layoutDecision,
+  onPublicationStage,
   onSupplement,
   compact = false,
 }: {
@@ -70,7 +72,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
   source: LayoutSource | null;
   readingView?:ReactNode;
   compact?: boolean;
-  onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void;
+  onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void; layoutDecision?: (doc: EditableLayout) => Promise<import("@/lib/knowledgeLayoutAskGate").KnowledgeLayoutChoice> | undefined; onPublicationStage?: (doc: EditableLayout, stage: import("@/lib/knowledgePublicationStage").KnowledgePublicationStage | null, error: string) => void;
 }, ref) {
   // 本机缓存（1111 瘦身）：云端为准，本机只完整保存当前打开的稿与未同步的稿，其他稿只留索引；旧 v1 完整库确认云端已有同版或更新版后才删除。
   const legacyKey = legacyLayoutCacheKey(owner);
@@ -645,6 +647,16 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
             >
               保存云端
             </button>
+            {doc?.publication && !doc.publication.review ? (
+              // 站长 2026-11-21：继续自动审校紧挨「保存云端」，不用翻到排版面板里找。由当前稿的排版面板接手执行（与面板内同名按钮是同一个动作）。
+              <button
+                className={button}
+                disabled={!ready || !cloudReady || busy}
+                onClick={() => window.dispatchEvent(new CustomEvent("knowledge-publication-resume", { detail: { documentId: doc.id } }))}
+              >
+                继续自动审校
+              </button>
+            ) : null}
             <button
               className={button}
               disabled={!ready || busy}
@@ -721,7 +733,8 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
                 waitForReading={synchronizedRun?.documentId === doc.id ? synchronizedRun.waitForReading : undefined}
                 autoPreparePresentation={synchronizedRun?.documentId === doc.id && synchronizedRun.preparePresentation}
                 preauthorizedPresentationCredits={synchronizedRun?.documentId === doc.id ? synchronizedRun.presentationCredits : undefined}
-                waitForImages={synchronizedRun?.documentId === doc.id ? synchronizedRun.waitForImages : undefined}/>:<>
+                waitForImages={synchronizedRun?.documentId === doc.id ? synchronizedRun.waitForImages : undefined}
+                waitForLayoutDecision={layoutDecision ? () => layoutDecision(doc) ?? Promise.resolve("layout") : undefined} onStage={onPublicationStage ? (stage, error) => onPublicationStage(doc, stage, error) : undefined}/>:<>
               <div className="grid gap-5 lg:grid-cols-2">
                 <div className="space-y-3">
                   <label className="block text-sm">
