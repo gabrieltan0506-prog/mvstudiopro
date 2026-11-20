@@ -345,7 +345,7 @@ jobs:
                 attempt=0
                 continue
               fi
-              if [ "$status" -eq 0 ] || ! grep -q '"growth_cleanup_busy"' "$ROOT/retirement-result-$kind.json"; then
+              if [ "$status" -eq 0 ] || ! node scripts/growth-archive-retire-busy.mjs "$status" "$ROOT/retirement-result-$kind.json" "$ROOT/retirement-stderr-$kind.log"; then
                 [ "$status" -eq 0 ] || exit "$status"
                 break
               fi
