@@ -121,7 +121,7 @@ it("云存储瞬态读错最多重试四次，嵌套检查不放大重试次数"
 
 it('915个乱序完成批次恢复时首报915，只对177个缺口检索，成稿按原章顺序',async()=>{
   const f=setup();
-  const evidence={...f.evidence,listKeys:async(prefix:string)=>[...f.data.keys()].filter(k=>k.startsWith(prefix))};
+  const evidence={...f.evidence,listKeys:async(prefix:string)=>Array.from(f.data.keys()).filter(k=>k.startsWith(prefix))};
   const bodies=Array.from({length:1092},(_,i)=>`第${i}章。<!-- 待核：本章史料 -->`);
   const digest=createHash('sha256').update(JSON.stringify(bodies)).digest('hex');
   f.data.set('test/input.json',{digest,bodies});
@@ -137,7 +137,7 @@ it('915个乱序完成批次恢复时首报915，只对177个缺口检索，成�
   const progress=vi.fn();
   const result=await verifyKnowledgeEditionManuscripts(bodies,evidence,invoke as any,progress);
   expect(progress.mock.calls[0][0]).toEqual({doneBatches:915,totalBatches:1092,pass:3});
-  expect(invoked.sort((a,b)=>a-b)).toEqual([...missing]);
+  expect(invoked.sort((a,b)=>a-b)).toEqual(Array.from(missing));
   expect(result).toHaveLength(1092);
   for(let i=0;i<bodies.length;i++)expect(result[i]).toContain(missing.has(i)?`第${i}章`:`已保存第${i}章`);
   expect(await evidence.listKeys(`test/completed/${digest}/`)).toHaveLength(1092);
@@ -150,7 +150,7 @@ it('旧单只迁移已保存的回执，中断后直接从已建清单恢复',as
   f.data.set('test/input.json',{digest,bodies});
   f.data.set('test/pages/0.json',{digest,status:'saved',body:'旧核实正文'});
   let interrupt=true;
-  const evidence={...f.evidence,listKeys:async(prefix:string)=>[...f.data.keys()].filter(k=>k.startsWith(prefix)),
+  const evidence={...f.evidence,listKeys:async(prefix:string)=>Array.from(f.data.keys()).filter(k=>k.startsWith(prefix)),
     save:async(key:string,value:unknown)=>{
       if(key==='test/verified.json'&&interrupt)throw Error('测试中断');
       await f.evidence.save(key,value);
