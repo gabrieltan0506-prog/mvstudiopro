@@ -117,3 +117,25 @@ describe("withTimeout heartbeat（0910：知识卡提炼不设总时长上限，
     expect(Date.now() - started).toBeLessThan(30_000);
   }, 40_000);
 });
+
+it("双版手册独立心跳：无前端轮询、同一步运行25分钟仍可完成，结束后停止写心跳", async () => {
+  const {startPlatformExecutionHeartbeat} = await import("./runner.js");
+  vi.useFakeTimers();
+  const persist = vi.fn(async () => true);
+  const jobId = "edition-heartbeat-95";
+  const stop = startPlatformExecutionHeartbeat({id:jobId,type:"platform",input:{
+    action:"knowledge_card_derive_level",params:{editionVersion:2}
+  }},Number.MAX_SAFE_INTEGER,20*60_000,persist);
+  expect(stop).toBeTypeOf("function");
+  try {
+    const work = new Promise<string>(resolve=>setTimeout(()=>resolve("已存稿"),25*60_000));
+    const result = withTimeout(work, Number.MAX_SAFE_INTEGER, "超时", {heartbeat:{jobId,stallMs:20*60_000}});
+    await vi.advanceTimersByTimeAsync(25*60_000);
+    await expect(result).resolves.toBe("已存稿");
+    expect(persist.mock.calls.length).toBeGreaterThanOrEqual(49);
+    stop!();
+    const count = persist.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(persist).toHaveBeenCalledTimes(count);
+  } finally { stop?.();vi.useRealTimers(); }
+});

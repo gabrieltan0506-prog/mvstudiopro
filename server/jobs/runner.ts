@@ -403,20 +403,32 @@ function clearJobHeartbeat(jobId: string | null | undefined): void {
 const STALL_CHECK_INTERVAL_MS = 15_000;
 
 /** 仅当前 worker 持有期间续租；数据库写入成功才算心跳，结束后停止续租。 */
-function startWorkerHeartbeat(jobId: string, stallMs: number): () => void {
+function startWorkerHeartbeat(jobId: string, stallMs: number, persist = touchJobRunningUpdatedAt): () => void {
   let pending = false;
   let stopped = false;
   const beat = () => {
     if (pending || stopped) return;
     pending = true;
     const sentAt = Date.now();
-    void touchJobRunningUpdatedAt(jobId).then((saved) => {
+    void persist(jobId).then((saved) => {
       if (saved && !stopped) jobHeartbeats.set(jobId, sentAt);
     }).catch(() => {}).finally(() => { pending = false; });
   };
   const timer = setInterval(beat, Math.max(1_000, Math.min(30_000, stallMs / 3)));
   timer.unref?.();
   return () => { stopped = true; clearInterval(timer); clearJobHeartbeat(jobId); };
+}
+
+/** 单次执行持有心跳，结束后由 worker 的 finally 释放。 */
+export function startPlatformExecutionHeartbeat(
+  job: {id:string;type:string;input:unknown}, timeoutMs:number, distillStallMs?:number,
+  persist = touchJobRunningUpdatedAt,
+): (()=>void) | undefined {
+  const input = job.input;
+  const edition = job.type==="platform" && isRecord(input) && input.action==="knowledge_card_derive_level"
+    && isRecord(input.params) && input.params.editionVersion===2;
+  if (!edition && (distillStallMs !== undefined || (job.type==="audio" && isRecord(input) && input.action==="song_operation"))) return;
+  return startWorkerHeartbeat(job.id,distillStallMs ?? timeoutMs,persist);
 }
 
 /** 内层任务取消器与外层共用成功持久化的心跳，保留各自失联窗口。 */
@@ -3796,8 +3808,8 @@ async function processPlatformJob(
           await patchProgress({
             distillStage: params.editionVersion===2 ? (p.pass===3?"verifying":p.pass===4?"revising":p.pass===2?"merging":"deriving") : "deriving",
             ...(params.editionVersion===2 ? {distillStep:step,...position} : {}),
-            distillStageDone: params.editionVersion===2 && p.pass===4 ? 0 : p.doneBatches,
-            distillStageTotal: params.editionVersion===2 && p.pass===4 ? 0 : p.totalBatches,
+            distillStageDone: params.editionVersion===2 && p.pass===4 && !p.step ? 0 : p.doneBatches,
+            distillStageTotal: params.editionVersion===2 && p.pass===4 && !p.step ? 0 : p.totalBatches,
             distillPercent: params.editionVersion===2 ? Math.round(p.pass===1?5+35*frac:p.pass===2?40+10*frac:p.pass===3?50+20*frac:finishingPercent) : Math.round(5 + 90 * frac),
           });
         },
@@ -4118,7 +4130,8 @@ export async function runClaimedJob(
         ? { jobId: job.id, stallMs: resolveKnowledgeCardDistillStallMs() }
         : undefined;
     const songOperationJob = jobType === "audio" && isRecord(job.input) && job.input.action === "song_operation";
-    if (!distillHeartbeat && !songOperationJob) stopWorkerHeartbeat = startWorkerHeartbeat(job.id, timeoutMs);
+    // 双版手册也在长请求和分页期间续租；页面轮询和阶段切换均不参与 worker 心跳。
+    stopWorkerHeartbeat = startPlatformExecutionHeartbeat(job,timeoutMs,distillHeartbeat?.stallMs);
     const { output, provider } = await withTimeout(
       withHeavyMediaContext({ userId: String(job.userId), executionId: job.id, parentJobId: job.id }, async () => {
         const execute = () => executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id);

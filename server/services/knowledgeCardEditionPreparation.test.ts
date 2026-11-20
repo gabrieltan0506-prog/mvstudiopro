@@ -20,7 +20,7 @@ it('正式两档只选择原章，完整知识不二次浓缩；逐页保存且�
  const evidence={prefix:'test/edition',read:async(k:string)=>storage.get(k)||null,save:async(k:string,v:any)=>{storage.set(k,v);}};
  const positions:number[]=[];
  const result=await prepareKnowledgeCardEditions({sourceMarkdown,evidence,measure:async()=>2,invoke:invoke as any,targetSections:3,
-   onProgress:p=>{if(p.step)positions.push(editionStepPosition(p.step,false).editionStepNumber || 0);}
+   onProgress:p=>{if(p.step && !p.totalBatches)positions.push(editionStepPosition(p.step,false).editionStepNumber || 0);}
  });
  expect(positions).toEqual([5,6,7,8,9,10,11,12,13]);
  const full=knowledgeEditionParts(result.fullEditionMarkdown)!,concise=knowledgeEditionParts(result.markdown)!;

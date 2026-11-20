@@ -119,3 +119,12 @@ it("取消和其他失败不重排，新书尚无核实任务时也不唤醒旧�
   await insert("another","7",{action:"knowledge_card_distill"},{});
   await expect(resumeLastKnowledgeVerification("7")).rejects.toThrow("最近一次读档");
 });
+
+it("95%心跳超时沿用原编号，保留1092个完成批次",async()=>{
+  await insert("timeout","7",{action:"knowledge_card_derive_level",params:{editionVersion:2,fullMarkdown:"底稿"}},
+    {distillStage:"revising",distillStageDone:1092,distillStageTotal:1092},"failed");
+  await pg.exec("update jobs set attempts=4,error='platform job timed out after 9007199254740991ms（连续 20 分钟没有任何进度，判为卡死）' where id='timeout'");
+  expect(await resumeLastKnowledgeVerification("7","timeout")).toEqual({jobId:"timeout"});
+  expect((await pg.query("select status,attempts,output from jobs where id='timeout'")).rows).toEqual([
+    {status:"queued",attempts:4,output:{distillStage:"revising",distillStageDone:1092,distillStageTotal:1092}}]);
+});

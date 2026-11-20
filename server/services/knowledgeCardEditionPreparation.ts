@@ -47,14 +47,25 @@ export const KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY=16;
  * 任一条失败即停止领取新条目，等在途全部收口后抛出序号最小的那条错误（与串行时最先失败的一条一致），
  * 不留后台写入、不报部分成功；重跑按同键同内容覆盖写，幂等。
  */
-async function saveKnowledgeEditionReceipts(evidence:KnowledgeRouteEvidence,entries:readonly (readonly [string,unknown])[]){
+async function saveKnowledgeEditionReceipts(evidence:KnowledgeRouteEvidence,entries:readonly (readonly [string,unknown])[],onCount?:(done:number,total:number)=>Promise<void>){
   // 用对象承载首个失败：直接用 let 变量时，TS 会把闭包内的赋值在外层误收窄为 never。
+  let done=0, lastReport=Date.now();
+  let report=Promise.resolve();
+  if(onCount && entries.length)await onCount(0,entries.length);
   let next=0;const state:{failure?:{index:number;error:unknown}}={};
   const record=(index:number,error:unknown)=>{const prior=state.failure as {index:number;error:unknown}|undefined;if(!prior||index<prior.index)state.failure={index,error};};
   await Promise.all(Array.from({length:Math.min(KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY,entries.length)},async()=>{
     while(!state.failure&&next<entries.length){
       const index=next++;
-      try{await evidence.save(entries[index]![0],entries[index]![1]);}
+      try{
+        await evidence.save(entries[index]![0],entries[index]![1]);
+        const count=++done;
+        if(onCount && (count===entries.length || Date.now()-lastReport>=3000)){
+          lastReport=Date.now();
+          report=report.then(()=>onCount(count,entries.length));
+          await report;
+        }
+      }
       catch(error){record(index,error);}
     }
   }));
@@ -68,8 +79,8 @@ export async function prepareKnowledgeCardEditions(params:{
   invoke?:typeof invokeKnowledgePublicationRoutes;
   measure?:typeof measureKnowledgeBookletFromWorker;
 }) {
-  const reportStep = async (step:string) => {
-    await params.onProgress?.({pass:4, step, doneBatches:0, totalBatches:0});
+  const reportStep = async (step:string,doneBatches=0,totalBatches=0) => {
+    await params.onProgress?.({pass:4, step, doneBatches, totalBatches});
   };
   const {sourceMarkdown}=params;
   const evidence=guardKnowledgeEditionEvidence(params.evidence);
@@ -225,7 +236,7 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
     const parts=knowledgeEditionParts(markdown)!;
     editionPageCounts[level]={imagePages:null,readingPages:null};
     await saveKnowledgeEditionReceipts(evidence,Array.from(parts.modules.entries()).map(([index,module])=>
-      [`${evidence.prefix}/pages/${level}/chapters/${index}.json`,{inputDigest,...module,status:hasKnowledgeBody(module.body)?'saved':'pending_content'}] as const));
+      [`${evidence.prefix}/pages/${level}/chapters/${index}.json`,{inputDigest,...module,status:hasKnowledgeBody(module.body)?'saved':'pending_content'}] as const),(done,total)=>reportStep(`保存${edition}正文和章节`,done,total));
     await reportStep(`计算并保存${edition}图文分页`);
     try{
       const plan=planKnowledgeCardPages(markdown,params.model);
@@ -234,7 +245,7 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
       const topics=knowledgeEditionImagePlan(markdown);
       editionPageCounts[level].pageBudget=knowledgeEditionBudgetCheck(level,plan.pageCount,topics?.readingChars||0,knowledgeEditionImageChars(topics));
       await saveKnowledgeEditionReceipts(evidence,Array.from(plan.pages.entries()).map(([index,body])=>
-        [`${evidence.prefix}/pages/${level}/images/${index}.json`,{inputDigest,pageIndex:index,body,status:'saved'}] as const));
+        [`${evidence.prefix}/pages/${level}/images/${index}.json`,{inputDigest,pageIndex:index,body,status:'saved'}] as const),(done,total)=>reportStep(`计算并保存${edition}图文分页`,done,total));
     }catch(error){rethrowKnowledgeEditionInvariant(error);issues.push({kind:'pagination',message:knowledgeEditionErrorMessage(error),level});}
     await reportStep(`测量${edition}文字页数`);
     try{

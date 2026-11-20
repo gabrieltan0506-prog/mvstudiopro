@@ -126,7 +126,11 @@ export async function resumeLastKnowledgeVerification(userId: string, expectedId
   const updated = await db.update(jobs).set({status:"queued",error:null,updatedAt:new Date()})
     .where(and(ownerAndId,eq(jobs.status,"failed"),eq(jobs.attempts,last.attempts),
       sql`coalesce(${jobs.input}->>'cancelRequestedAt','') = ''`,
-      sql`${jobs.error} like '%章节检查点保存或读取失败%'`
+      sql`(${jobs.error} like '%章节检查点保存或读取失败%' or (
+        ${jobs.input}->'params'->>'editionVersion' = '2'
+        and ${jobs.output}->>'distillStage' in ('verifying','revising','finishing')
+        and ${jobs.error} ~ '^platform job timed out after [0-9]+ms（连续 [0-9]+ 分钟没有任何进度，判为卡死）$'
+      ))`
     )).returning({id:jobs.id});
   if (!updated.length) {
     const [current] = await db.select({status:jobs.status}).from(jobs).where(ownerAndId);
