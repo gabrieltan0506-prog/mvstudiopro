@@ -604,13 +604,17 @@ export default function KnowledgePublicationPanel({
   // 成品画质（站长 2026-11-21）：像素不变，只选 JPEG 画质档；选项一变立刻估算体积；重新生成只重做导出，不调用模型。
   const [exportQuality,setExportQuality]=useState<KnowledgeExportImageQualityOption>(doc.publication?.exportOptions?.imageQuality??0.95);
   useEffect(()=>{setExportQuality(doc.publication?.exportOptions?.imageQuality??0.95);},[doc.id,doc.publication?.exportOptions?.imageQuality]);
+  // 去水印（站长 2026-11-21）：一般账号的手册带宣传水印、不能去掉；付费账号不打；站长/督导默认照打，可勾选去掉。规则由服务端判定。
+  const watermarkPolicy=trpc.editableLayout.exportWatermarkPolicy.useQuery(undefined,{staleTime:10*60_000,retry:false});
+  const [noWatermark,setNoWatermark]=useState(doc.publication?.exportOptions?.noWatermark===true);
+  useEffect(()=>{setNoWatermark(doc.publication?.exportOptions?.noWatermark===true);},[doc.id,doc.publication?.exportOptions?.noWatermark]);
   const regenerateWithQuality = async () => {
     if (active.current) return;
     locked(true);
     setError("");
     try {
       const fresh = latest.current;
-      const next = { ...fresh, publication: { ...fresh.publication!, exportOptions: { imageQuality: exportQuality } }, updatedAt: new Date().toISOString() };
+      const next = { ...fresh, publication: { ...fresh.publication!, exportOptions: { imageQuality: exportQuality, ...(noWatermark ? { noWatermark: true } : {}) } }, updatedAt: new Date().toISOString() };
       const saved = await save(next);
       onChange(next);
       await exportLayout(next, saved);
@@ -971,6 +975,10 @@ export default function KnowledgePublicationPanel({
                       {KNOWLEDGE_EXPORT_IMAGE_QUALITY_OPTIONS.map(q => <option key={q} value={q}>{KNOWLEDGE_EXPORT_IMAGE_QUALITY_LABELS[q]}</option>)}
                     </select>
                   </label>
+                  {watermarkPolicy.data?.watermarkByDefault && watermarkPolicy.data.canRemove && (
+                    <label className="flex items-center gap-2"><input type="checkbox" aria-label="去水印" checked={noWatermark} disabled={busy} onChange={e => setNoWatermark(e.target.checked)} />去水印</label>
+                  )}
+                  {watermarkPolicy.data && !watermarkPolicy.data.watermarkByDefault && <span>付费账号：成品不打水印</span>}
                   <span role="status" aria-label="成品体积估算">估算 PDF 约 {Math.round(estimate.totalBytes / 1024 / 1024)} MB（{images} 张图约 {Math.round(estimate.imageBytes / 1024 / 1024)} MB，文字部分很小）{estimate.overNotice ? "；超过 280MB，仍可生成" : ""}</span>
                   {files?.billing && <span>内文 {files.billing.readingPages} 页 × {files.billing.unitCredits} 积分；本稿已结算，重新生成不重复扣费</span>}
                   <button className={button} disabled={busy} onClick={() => void regenerateWithQuality()}>按此画质重新生成 PDF（不调用模型）</button>

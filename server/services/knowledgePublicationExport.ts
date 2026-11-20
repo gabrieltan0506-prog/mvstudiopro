@@ -40,6 +40,7 @@ import {
 import { fetchPdfBufferFromWorker, measureKnowledgeBookletDetailsFromWorker, type KnowledgeBookletMeasure } from "./pdfWorkerClient";
 import { auditKnowledgeExportSegments, readKnowledgeLayoutAuditSummary, type KnowledgeLayoutAuditSummary } from "../../shared/knowledgeLayoutAudit";
 import { stripKnowledgeBookletWatermark, type KnowledgeBookletImageMode } from "../../shared/knowledgeBooklet";
+import { knowledgeExportAppliesWatermark, loadKnowledgeExportWatermarkPolicy, type KnowledgeExportWatermarkPolicy } from "./knowledgeExportWatermarkPolicy";
 import { ensureKnowledgeReviewThumbnail } from "./knowledgeReviewThumbnail";
 import { ensureKnowledgeExportImage, type KnowledgeExportImage } from "./knowledgeExportImage";
 import { KNOWLEDGE_EXPORT_PDF_NOTICE_BYTES, knowledgeExportJpegQuality, knowledgeExportReserveBytes, type KnowledgeExportJpegQuality } from "../../shared/knowledgeExportCapacity";
@@ -122,15 +123,8 @@ const measuredOf = (value: number | KnowledgeBookletMeasure): { count: number; b
   typeof value === "number" ? { count: value } : { count: value?.pages, booklets: Array.isArray(value?.booklets) ? value.booklets : undefined };
 const real = {
   settle: settleKnowledgeInterior,
-  /**
-   * 成品是否打宣传水印（站长 2026-11-21）：一般用户照打；付费用户（沿用全站既有的付费判定 resolveWatermark：
-   * 付费角色或有过正式加值）不打。站长/督导账号自己出的手册用于宣传，照打。
-   */
-  watermark: async (owner: number): Promise<boolean> => {
-    const { resolveUserTier, resolveWatermark } = await import("./tier-provider-routing");
-    if (await resolveUserTier(owner, false) === "supervisor") return true;
-    return resolveWatermark(owner, false);
-  },
+  /** 成品水印规则（一般用户照打；付费用户不打；站长/督导默认照打、可勾选去掉），见 knowledgeExportWatermarkPolicy。 */
+  watermarkPolicy: (owner: number): Promise<KnowledgeExportWatermarkPolicy> => loadKnowledgeExportWatermarkPolicy(owner),
   load: readCanonicalLayoutLibrary,
   review: readKnowledgePublicationReview,
   image: readKnowledgeImage,
@@ -321,7 +315,8 @@ export async function exportKnowledgePublication(
   if(derived.imageModes&&derived.imageModes.length!==doc.pages.length)throw new Error("逐章版式数量与章节不一致");
   if(derived.prefixTag&&!/^[a-z0-9-]{1,64}$/.test(derived.prefixTag))throw new Error("导出目录标记无效");
   // 只注入了读图（旧测试/派生调用）而未注入水印判定时按「打水印」处理，不触达真实数据库。
-  const watermark = "watermark" in overrides || !("image" in overrides) ? await deps.watermark(owner) : true;
+  const watermark = "watermarkPolicy" in overrides || !("image" in overrides)
+    ? knowledgeExportAppliesWatermark(await deps.watermarkPolicy(owner), doc.publication?.exportOptions?.noWatermark) : true;
   const unmark = (html: string) => watermark ? html : stripKnowledgeBookletWatermark(html);
   // 无水印成品与有水印成品分目录存放（-nowm），互不复用。
   const prefixFor=(quality:number)=>`${sourcePrefix}-${knowledgeExportQualityTag(quality)}${watermark?"":"-nowm"}${derived.prefixTag?`-${derived.prefixTag}`:""}`;

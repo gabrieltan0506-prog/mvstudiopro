@@ -129,7 +129,9 @@ export const knowledgePublicationSchema = z
     infographicTemplateId: z.string().max(100).optional(),
     layoutConversationId: z.string().uuid().optional(),
     /** 导出选项（站长 2026-11-21）：成品配图画质，像素不变；缺省 0.95。只影响导出成品，不影响审校与排版。 */
-    exportOptions: z.object({ imageQuality: z.union([z.literal(0.95), z.literal(0.85), z.literal(0.75), z.literal(0.65)]) }).strict().optional(),
+    exportOptions: z.object({ imageQuality: z.union([z.literal(0.95), z.literal(0.85), z.literal(0.75), z.literal(0.65)]),
+      /** 勾选「去水印」（只有有权去掉的账号生效，见 knowledgeExportWatermarkPolicy）。 */
+      noWatermark: z.boolean().optional() }).strict().optional(),
     designMode: z.enum(["content"]).optional(),
     /**
      * 审校预算版本（站长 2026-11-20：总页数 ≤80、文字续页约 30 页）。只在首次开始审校（尚无并发分配、无章节审校结果）时写入，

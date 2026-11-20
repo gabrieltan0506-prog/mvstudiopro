@@ -57,6 +57,11 @@ export const editableLayoutRouter = router({
     const {loadKnowledgePublicationCallStats}=await import("../services/knowledgePublicationCallStats");
     return loadKnowledgePublicationCallStats(ctx.user.id,input.documentId);
   }),
+  /** 本账号的成品水印规则：是否默认打水印、是否可勾选去掉（只读）。 */
+  exportWatermarkPolicy: publicationProcedure.query(async({ctx})=>{
+    const {loadKnowledgeExportWatermarkPolicy}=await import("../services/knowledgeExportWatermarkPolicy");
+    return loadKnowledgeExportWatermarkPolicy(ctx.user.id);
+  }),
   bookLayoutPreview: publicationProcedure.input(z.object({documentId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
     const {currentLayoutGeneration}=await import("../services/editableLayoutStore");
     const {loadKnowledgeBookLayoutView}=await import("../services/knowledgeBookLayout");
