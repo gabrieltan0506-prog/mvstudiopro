@@ -30,7 +30,7 @@ const quote=input=>{window.quotes.push(input);const purpose=input.purpose||'revi
   if(mode&&mode.fail)return new Promise((_,reject)=>setTimeout(()=>reject(new Error(mode.fail)),mode.delay||0));
   return Promise.resolve({maxCredits:0,estimatedCredits:0,paidUnit:8,batches:2,consistencyKnown:true});};
 export const trpc={useUtils:()=>({client:{auth:{me:{query:async()=>({id:7})}},editableLayout:{exportPublicationStatus:{query:async()=>({status:'missing'})}}},editableLayout:{get:{fetch:async()=>window.saved},publicationQuote:{fetch:quote}}}),
- editableLayout:{save:{useMutation:()=>({mutateAsync:async input=>{window.saves++;window.saved={library:structuredClone(input.library),generation:String(Number(window.saved.generation)+1)};return {generation:window.saved.generation,updatedAt:new Date().toISOString()}}})},
+ editableLayout:{saveDocuments:{useMutation:()=>({mutateAsync:async()=>{throw Object.assign(new Error('No procedure'),{data:{code:'NOT_FOUND',httpStatus:404}})}})},save:{useMutation:()=>({mutateAsync:async input=>{window.saves++;window.saved={library:structuredClone(input.library),generation:String(Number(window.saved.generation)+1)};return {generation:window.saved.generation,updatedAt:new Date().toISOString()}}})},
   startExportPublication:{useMutation:()=>({mutateAsync:async()=>({status:'missing',taskId:'t'})})},exportPublication:{useMutation:()=>({})},exportPublicationPptx:{useMutation:()=>({})}}};
 ` : "export const streamManhuaAdvisor=input=>{window.calls.push(input);return new Promise(()=>{});};" }));
     } }],

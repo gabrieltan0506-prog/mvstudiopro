@@ -2,7 +2,7 @@ import express from "express";
 import puppeteer, { type Page } from "puppeteer";
 import { randomBytes } from "node:crypto";
 import { finalizeKnowledgeBookletPagination, readKnowledgeBookletDetails } from "./knowledgeBookletPagination";
-import { pdfImageCompressionScript } from "./pdfImageCompression";
+import { pdfImageCompressionScript, pdfImageLoadScript } from "./pdfImageCompression";
 import {
   buildSubsetFaceCss,
   collectPdfSubsetChars,
@@ -37,6 +37,8 @@ const PORT = process.env.PORT || 8080;
 const SCALE_FACTOR = Number(process.env.PDF_SCALE_FACTOR) || 1.0;
 const POST_LAYOUT_WAIT_MS = Number(process.env.PDF_POST_LAYOUT_WAIT_MS) || 2_000;
 const PER_IMAGE_WAIT_MS = Number(process.env.PDF_PER_IMAGE_WAIT_MS) || 20_000;
+/** 知识手册成品原图（4K PNG 13–18MB）单图载入上限；超时即本段报错重试，不打缺图成品。 */
+const ORIGINAL_IMAGE_WAIT_MS = Number(process.env.PDF_ORIGINAL_IMAGE_WAIT_MS) || 180_000;
 const ALLOWED_WAIT = new Set(["load", "domcontentloaded", "networkidle0", "networkidle2"]);
 const SET_CONTENT_WAIT_RAW = (process.env.PDF_SET_CONTENT_WAIT_UNTIL || "load").toLowerCase();
 const SET_CONTENT_WAIT_UNTIL = ALLOWED_WAIT.has(SET_CONTENT_WAIT_RAW)
@@ -434,23 +436,8 @@ app.post("/generate-pdf", async (req, res) => {
     // 否则 page.pdf() 时 naturalWidth=0 → 封面白屏 / 页数统计失真（用户实测 B 类问题）。
     const tImg = Date.now();
     console.log(`[pdf-worker:${reqId}] step3/5 images load+decode start`);
-    await page.evaluate(
-      `Promise.all(Array.from(document.images).map(function (img) {
-      return new Promise(function (resolve) {
-        function done() { resolve(null); }
-        if (img.complete && img.naturalWidth > 0) return done();
-        img.addEventListener("load", done, { once: true });
-        img.addEventListener("error", done, { once: true });
-        setTimeout(done, ${PER_IMAGE_WAIT_MS});
-      });
-    })).then(function () {
-      return Promise.all(Array.from(document.images).map(function (img) {
-        return (img.decode && typeof img.decode === "function")
-          ? img.decode().catch(function () {})
-          : Promise.resolve();
-      }));
-    })`,
-    );
+    // 2026-11-21：成品原图（data-pdf-original）等待放宽且缺图即报错，见 pdfImageLoadScript。
+    await page.evaluate(pdfImageLoadScript(PER_IMAGE_WAIT_MS, ORIGINAL_IMAGE_WAIT_MS));
     console.log(`[pdf-worker:${reqId}] step3/5 images load+decode +${Date.now() - tImg}ms`);
 
     // 🌟 核心優化：在不使用 Ghostscript 的情況下，直接在 DOM 層面壓縮所有超大圖片
@@ -539,7 +526,11 @@ app.post("/generate-pdf", async (req, res) => {
     const pdfBuffer = rawPdfBuffer;
 
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Length", String(pdfBuffer.length));
+    // 成品原图握手：请求里带原图标记、且本服务按原图入版（不缩放、不重编码）时回报此头。
+    // 服务端据此确认排版服务已是支持原图的版本；旧版本没有这个头，服务端拒收，不把被压缩的图当成品。
+    if (html.includes('data-pdf-original="1"')) res.setHeader("X-Pdf-Original-Images", "1");
+    // 2026-11-21：不再声明 Content-Length，改为分块（chunked）回传。Cloud Run 对未分块/非流式的 HTTP/1 应答有 32 MiB 上限，
+    // 知识手册成品改用 4K 原图后单段 PDF（一张 3840×2160 原图无损入版，带透明通道时原始像素即约 33MB）可能超过它。
     res.setHeader(
       "Content-Disposition",
       `attachment; filename="mvstudio-analysis-${Date.now()}.pdf"`,
@@ -550,7 +541,10 @@ app.post("/generate-pdf", async (req, res) => {
       `[pdf-worker:${reqId}] DONE html=${htmlMb}MB pdf=${finalMb}MB total=+${Date.now() - t0}ms`,
     );
 
-    res.send(Buffer.from(pdfBuffer));
+    // 分块写出（Node 未见 Content-Length 即用 Transfer-Encoding: chunked）。
+    const CHUNK = 4 * 1024 * 1024;
+    for (let offset = 0; offset < pdfBuffer.length; offset += CHUNK) res.write(pdfBuffer.subarray(offset, offset + CHUNK));
+    res.end();
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     const elapsedSec = ((Date.now() - t0) / 1000).toFixed(1);

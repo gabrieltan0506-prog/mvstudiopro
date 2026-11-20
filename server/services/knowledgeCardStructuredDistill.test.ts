@@ -35,7 +35,9 @@ it('同一任务的旧原稿结果不能被新输入命中，完整结束门禁�
  await run('原文一');await run('原文二');expect(invoke).toHaveBeenCalledTimes(2);
  const partial=vi.fn(async(request:any)=>{const raw=f.response(request);return {...raw,text:raw.text.replace('STOP','MAX_TOKENS')};});
  const work=()=>knowledgeStructuredDistillContext.run({evidence:f.evidence,invoke:partial as any},()=>invokeKnowledgeStructuredDistill({sourceText:'未完成的原文',imageUrls:[],modelName:'glm-5.3-flashx',minSections:1}));
- await expect(work()).rejects.toThrow('尚未完整');await expect(work()).rejects.toThrow('尚未完整');expect(partial).toHaveBeenCalledTimes(1);
+ // 1121：半截回包是明确失败（写坏）：原目录回包保留，新目录完整重试一轮；原文过短不再减半 → 记缺口，续跑零调用回放缺口。
+ const gap=await work().catch(e=>e);expect(gap.message).toContain('尚未完整');expect(gap.knowledgeDistillGap[0].category).toBe('invalid_output');
+ await expect(work()).rejects.toThrow('尚未完整');expect(partial).toHaveBeenCalledTimes(2);
 });
 it('GLM首选沿正式JSON路由出站，真实字段经解析再消费，回放零网络',async()=>{
  const f=fixture();let model='';

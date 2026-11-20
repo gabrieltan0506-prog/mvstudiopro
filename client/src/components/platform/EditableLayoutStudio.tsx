@@ -10,6 +10,7 @@ import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import KnowledgePublicationPanel from "./KnowledgePublicationPanel";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import { trpc } from "@/lib/trpc";
+import { layoutCloudBaseline, saveLayoutLibraryToCloud, type LayoutCloudBaseline } from "@/lib/editableLayoutCloudSave";
 import { flyDownloadUrl } from "@/lib/gcsTransfer";
 import {
   compactLayoutCache,
@@ -110,6 +111,11 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
   const preparedRun = useRef<{ documentId: string; presentationCredits?:number; preparePresentation?:boolean; waitForReading?:()=>Promise<void>; waitForImages: (ids: string[]) => Promise<void>; cardsOnlyDoc?: EditableLayout } | null>(null);
   const utils = trpc.useUtils();
   const saveMutation = trpc.editableLayout.save.useMutation();
+  const saveDocumentsMutation = trpc.editableLayout.saveDocuments.useMutation();
+  /** 最近一次读到/存成的云端库（私有拷贝）：只传变更的保存以它为基线；没有基线时整库保存。 */
+  const cloudBaseline = useRef<LayoutCloudBaseline | null>(null);
+  /** 服务端不认识只传变更的接口（旧版本）：本会话改用整库保存。 */
+  const deltaUnsupported = useRef(false);
   const finishedExportStarter = trpc.editableLayout.startExportPublication.useMutation();
   const [finishedDownloading, setFinishedDownloading] = useState("");
   const [finishedAudit, setFinishedAudit] = useState<{ documentId: string; audit: unknown } | null>(null);
@@ -164,7 +170,15 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
   /** 所有整库云端保存的唯一入口：不完整库拒绝保存；以旧完整库为底稿的内容一旦保存成功即删除旧 key。 */
   const cloudSave = async (input: { library: LayoutLibrary; expectedGeneration: string }) => {
     if (partialLibrary.current) throw new Error("云端稿件尚未读取完成，本次未保存，避免覆盖其他稿件；请先读取云端");
-    const result = await saveMutation.mutateAsync(input);
+    // 默认只传变更；对不上或服务端是旧版本时自动整库保存（见 editableLayoutCloudSave）。冲突与校验失败原样抛出。
+    const saved = await saveLayoutLibraryToCloud({
+      input, baseline: cloudBaseline.current, deltaUnsupported: deltaUnsupported.current,
+      saveDelta: delta => saveDocumentsMutation.mutateAsync(delta),
+      saveFull: full => saveMutation.mutateAsync(full),
+    });
+    deltaUnsupported.current = saved.unsupported;
+    cloudBaseline.current = saved.baseline;
+    const result = saved.result;
     if (legacyPresent.current && legacyInMemory.current) {
       try { localStorage.removeItem(legacyKey); legacyPresent.current = false; legacyInMemory.current = false; } catch { /* 删除失败下次再删 */ }
     }
@@ -222,6 +236,8 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
         if (cancelled) return;
         if (result.library && result.library.owner !== owner)
           throw new Error("云端稿件账号不匹配，未读取");
+        // 基线描述的是云端，与本机采用哪份稿无关；本机 generation 与它不同时保存自然走整库路径。
+        cloudBaseline.current = layoutCloudBaseline(result.generation, result.library, owner);
         const cloud = { library: result.library, generation: result.generation };
         if (legacy) {
           // 旧完整库：确认云端已有同版本或更新版本、本机无未保存修改才删；否则原样保留。
@@ -534,6 +550,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
       if (!alive.current) return;
       if (result.library && result.library.owner !== owner)
         throw new Error("云端稿件账号不匹配，未读取");
+      cloudBaseline.current = layoutCloudBaseline(result.generation, result.library, owner);
       partialLibrary.current = false;
       legacyInMemory.current = false;
       install({

@@ -25,3 +25,28 @@ it("最多重试 3 次后返回失败（交由前台显示预览暂时读不出�
   const left = await loadKnowledgePreviewWithRetry(async () => { calls++; here = false; throw Error("x"); }, { alive: () => here, sleep: async () => undefined });
   expect(left.ok).toBe(false); expect(calls).toBe(1);
 });
+
+import { knowledgeStageEstimatedFraction, knowledgeStageProgress as stageProgress } from "./knowledgePublicationStage";
+import { knowledgeHandbookOverallProgress as overall } from "./knowledgeHandbookOverallProgress";
+it("没有计数的步按已用时持续前进、标为估算，且不会自己走到下一步", () => {
+  // 统稿（第 2 步，起点 60，权重 15）：0 秒在起点，之后单调上升，再久也到不了 75。
+  expect(stageProgress({ step: 1 })?.percent).toBe(60);
+  expect(stageProgress({ step: 1 }, 0)?.estimated).toBeUndefined();
+  const at = (ms: number) => stageProgress({ step: 1 }, ms)!;
+  expect(at(60_000).percent).toBeGreaterThan(60);
+  expect(at(240_000).percent).toBeGreaterThan(at(60_000).percent);
+  expect(at(24 * 3600_000).percent).toBeLessThan(75);
+  expect(at(60_000).estimated).toBe(true);
+  expect(knowledgeStageEstimatedFraction(1, 1e12)).toBeLessThanOrEqual(0.9);
+});
+it("有计数的步只按实际完成数走，不受已用时影响", () => {
+  expect(stageProgress({ step: 2, done: 3, total: 12 }, 600_000)).toMatchObject({ percent: 78, stepDone: 3, stepCount: 12 });
+  expect(stageProgress({ step: 2, done: 3, total: 12 }, 600_000)?.estimated).toBeUndefined();
+});
+it("总体进度条同样随已用时前进；出错时停在实际位置", () => {
+  const base = { status: "succeeded" as const, percent: 100 };
+  const still = overall({ base, decision: "layout", stage: { step: 1 } }).percent;
+  const moving = overall({ base, decision: "layout", stage: { step: 1 }, stageElapsedMs: 240_000 }).percent;
+  expect(moving).toBeGreaterThan(still);
+  expect(overall({ base, decision: "layout", stage: { step: 1 }, stageElapsedMs: 240_000, layoutError: "停了" }).percent).toBe(still);
+});

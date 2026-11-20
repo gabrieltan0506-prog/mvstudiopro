@@ -54,7 +54,7 @@ it(
             }));
             b.onLoad({ filter: /.*/, namespace: "fixture" }, () => ({
               loader: "js",
-              contents: `export const trpc={useUtils:()=>({editableLayout:{get:{fetch:()=>window.cloudRead()}}}),editableLayout:{save:{useMutation:()=>({mutateAsync:input=>window.cloudSave(input)})}}};`,
+              contents: `export const trpc={useUtils:()=>({editableLayout:{get:{fetch:()=>window.cloudRead()}}}),editableLayout:{saveDocuments:{useMutation:()=>({mutateAsync:async()=>{throw Object.assign(new Error('No procedure'),{data:{code:'NOT_FOUND',httpStatus:404}})}})},save:{useMutation:()=>({mutateAsync:input=>window.cloudSave(input)})}}};`,
             }));
           },
         },

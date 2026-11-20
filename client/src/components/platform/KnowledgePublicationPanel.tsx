@@ -29,6 +29,7 @@ import {
 import { trpc } from "@/lib/trpc";
 import { runAfterKnowledgeLayoutDecision } from "@/lib/knowledgeLayoutAskGate";
 import { KnowledgePublicationStageDetail } from "./KnowledgePublicationStageDetail";
+import { KNOWLEDGE_EXPORT_IMAGE_QUALITY_LABELS, KNOWLEDGE_EXPORT_IMAGE_QUALITY_OPTIONS, estimateKnowledgeExportSize, knowledgeExportJpegQuality, type KnowledgeExportImageQualityOption } from "@shared/knowledgeExportCapacity";
 import { KNOWLEDGE_PREVIEW_UNAVAILABLE, KNOWLEDGE_PUBLICATION_STAGES, knowledgeStageLabel, loadKnowledgePreviewWithRetry, type KnowledgePublicationStage } from "@/lib/knowledgePublicationStage";
 import { withKnowledgeAdvisorRecovery } from "@/lib/knowledgeAdvisorRecovery";
 import { streamManhuaAdvisor } from "@/lib/manhuaAdvisorStream";
@@ -90,7 +91,7 @@ export default function KnowledgePublicationPanel({
    */
   const runExport = async (documentId: string, expectedGeneration: string) => {
     try { sessionStorage.setItem(exportMarker(documentId), expectedGeneration); } catch { /* 仅影响刷新续看 */ }
-    let state: { status: string; taskId: string; result?: unknown; error?: string; retryable?: boolean } = await exportStarter.mutateAsync({ documentId, expectedGeneration });
+    let state: { status: string; taskId: string; result?: unknown; error?: string; retryable?: boolean; progress?: { done: number; total: number; label: string } } = await exportStarter.mutateAsync({ documentId, expectedGeneration });
     let reissued = 0, misses = 0;
     const deadline = Date.now() + 90 * 60_000;
     try {
@@ -105,6 +106,12 @@ export default function KnowledgePublicationPanel({
         await new Promise(resolve => setTimeout(resolve, 3000));
         try { state = await utils.client.editableLayout.exportPublicationStatus.query({ taskId: state.taskId }); misses = 0; }
         catch (error) { if (++misses > 5) throw error; }
+        // 1121：服务端带回分项进度时按实际段数走「版面审查与 PDF x/y 段」并说明当前在做什么；旧服务端不返回 progress，行为不变。
+        const progress = state.status === "running" ? state.progress : undefined;
+        if (progress && alive.current && latest.current.id === documentId) {
+          setStage(progress.total > 0 ? { step: 3, done: progress.done, total: progress.total } : { step: 3 });
+          if (progress.label) setMessage(`正在生成 PDF：${progress.label}…`);
+        }
       }
       if (state.status === "failed") throw Object.assign(Error(state.error || "PDF 暂未生成完成，请重新点击生成"), { retryable: state.retryable });
       return (state as { result: Awaited<ReturnType<typeof utils.client.editableLayout.exportPublication.mutate>> }).result;
@@ -594,6 +601,26 @@ export default function KnowledgePublicationPanel({
       return next;
     });setRevisionError("");
   };
+  // 成品画质（站长 2026-11-21）：像素不变，只选 JPEG 画质档；选项一变立刻估算体积；重新生成只重做导出，不调用模型。
+  const [exportQuality,setExportQuality]=useState<KnowledgeExportImageQualityOption>(doc.publication?.exportOptions?.imageQuality??0.95);
+  useEffect(()=>{setExportQuality(doc.publication?.exportOptions?.imageQuality??0.95);},[doc.id,doc.publication?.exportOptions?.imageQuality]);
+  const regenerateWithQuality = async () => {
+    if (active.current) return;
+    locked(true);
+    setError("");
+    try {
+      const fresh = latest.current;
+      const next = { ...fresh, publication: { ...fresh.publication!, exportOptions: { imageQuality: exportQuality } }, updatedAt: new Date().toISOString() };
+      const saved = await save(next);
+      onChange(next);
+      await exportLayout(next, saved);
+    } catch (e) {
+      console.warn("[knowledgePublication] 重新生成失败原因：", String((e as Error)?.message ?? e).replace(/(?:https?|gs):\/\/\S+/g, "[地址]").slice(0, 800));
+      setError(knowledgePublicationPublicError(e).message);
+    } finally {
+      locked(false);
+    }
+  };
   const publish = async (format: "pdf" | "pptx" = "pdf") => {
     if (active.current) return;
     locked(true);
@@ -722,7 +749,7 @@ export default function KnowledgePublicationPanel({
       {(stage || message || error || !review || progressLog.length > 0) && (
         <section aria-label="手册处理进度" className="space-y-2 rounded-xl border border-[#b9c4ad]/40 bg-[#1f3329] p-4">
           <h5 className="text-sm font-semibold text-[#d7e6c4]">处理进度</h5>
-          <KnowledgePublicationStageDetail stage={stage} error={error} />
+          <KnowledgePublicationStageDetail stage={stage} error={error} bar />
           {stage && (
             <p aria-label="手册处理阶段" className="text-xs text-[#c0cabb]">
               {knowledgeStageLabel(stage)}
@@ -933,6 +960,23 @@ export default function KnowledgePublicationPanel({
 
             {pptxFile && <a className={button} href={flyDownloadUrl(pptxFile.pptxUrl)} download>下载 PPTX · {pptxFile.slides}页</a>}
             {files?.billing&&<p className="text-sm">纯内文 {files.billing.readingPages} 页 · 本稿已结算 {files.billing.chargedCredits} 积分{files.billing.alreadyCharged?"，本次未重复扣费":""} · 顾问不另收费</p>}
+            {pub.layoutConversationId && (() => {
+              const images = doc.pages.filter(p => p.imageUrl).length;
+              const estimate = estimateKnowledgeExportSize(Array.from({ length: images }, () => ({})), { segments: doc.pages.length, quality: knowledgeExportJpegQuality(exportQuality) });
+              return (
+                <div className="basis-full flex flex-wrap items-center gap-3 rounded-lg border border-[#b9c4ad]/30 p-3 text-sm" aria-label="成品画质与重新生成">
+                  <label className="flex items-center gap-2">成品图片画质（像素不变）
+                    <select aria-label="成品图片画质" className="rounded bg-[#f9f6ee] px-2 py-1 text-[#243a35]" value={exportQuality} disabled={busy}
+                      onChange={e => setExportQuality(Number(e.target.value) as KnowledgeExportImageQualityOption)}>
+                      {KNOWLEDGE_EXPORT_IMAGE_QUALITY_OPTIONS.map(q => <option key={q} value={q}>{KNOWLEDGE_EXPORT_IMAGE_QUALITY_LABELS[q]}</option>)}
+                    </select>
+                  </label>
+                  <span role="status" aria-label="成品体积估算">估算 PDF 约 {Math.round(estimate.totalBytes / 1024 / 1024)} MB（{images} 张图约 {Math.round(estimate.imageBytes / 1024 / 1024)} MB，文字部分很小）{estimate.overNotice ? "；超过 280MB，仍可生成" : ""}</span>
+                  {files?.billing && <span>内文 {files.billing.readingPages} 页 × {files.billing.unitCredits} 积分；本稿已结算，重新生成不重复扣费</span>}
+                  <button className={button} disabled={busy} onClick={() => void regenerateWithQuality()}>按此画质重新生成 PDF（不调用模型）</button>
+                </div>
+              );
+            })()}
             {files && (
               <>
                 {files.pdfUrl && (

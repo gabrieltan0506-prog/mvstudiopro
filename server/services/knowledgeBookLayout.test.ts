@@ -123,11 +123,13 @@ it("真实顾问路由产出方案，经永久回执与保存校验后控制合�
   expect(result.imagePages).toBe(2);expect(result.totalPages).toBe(4);
   const images=Object.fromEntries(view.doc.pages.filter(p=>p.imageUrl).map(p=>[p.imageUrl,`https://example.invalid/signed/${encodeURIComponent(p.imageUrl)}?X-Goog-Expires=604800&X-Goog-Signature=test`]));
   const savedHtml=Array.from(f.objects.entries()).find(([name])=>name.endsWith('/阅读稿.html'))![1].toString('utf8');
-  expect(savedHtml.replace(/>\s+</g, "><")).toBe(buildKnowledgePublicationHtml(view.doc,view.review,images).replace(/>\s+</g, "><"));
+  // 1121 起成品图为原图：阅读稿与预览同一版式，只是图标记换成 data-pdf-original（不带降采样标记）。
+  const asOriginal=(html:string)=>html.replace(/data-pdf-max-dim="\d+" data-pdf-quality="[\d.]+"/g,'data-pdf-original="1"');
+  expect(savedHtml.replace(/>\s+</g, "><")).toBe(asOriginal(buildKnowledgePublicationHtml(view.doc,view.review,images)).replace(/>\s+</g, "><"));
   // 配图只以地址引用：阅读稿与送排版服务的 HTML 都不得出现内嵌图片数据。
   expect(savedHtml).not.toContain('base64,');expect(savedHtml).toContain('https://example.invalid/signed/');
   expect(f.deps.pdf.mock.calls.map(([html])=>html).join('\n')).not.toContain('base64,');
-  expect(Array.from(f.objects.keys()).filter(name=>name.endsWith('/阅读稿.html')).every(name=>name.includes('-url2/'))).toBe(true);
+  expect(Array.from(f.objects.keys()).filter(name=>name.endsWith('/阅读稿.html')).every(name=>name.includes('-full-q95/'))).toBe(true);
   const sentHtml=f.deps.pdf.mock.calls.map(([html])=>html).join('\n');
   for(const end of ["末句一必须保留","末句二必须保留","末句三必须保留","末句四必须保留"])expect(sentHtml).toContain(end);
   // 逐页 PDF 已停写（站长 1120 定）：整册 PDF 与页数不变，分片照存，不再产出 <分片>.pdf.pages/。

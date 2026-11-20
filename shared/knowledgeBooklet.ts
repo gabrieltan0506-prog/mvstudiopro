@@ -10,6 +10,13 @@ export type KnowledgeBookletPage = { id: string; headline: string; body: string;
 export type KnowledgeBookletTheme = "fusion_chinese_garden" | "fusion_ink_mountains" | "fusion_coastal_lighthouse" | "fusion_glasshouse_garden" | "fusion_maple_bridge" | "fusion_snow_monastery";
 /** 手册每页的半透明平铺水印（用户 2026-11-11 定：图文手册生成时打上，单张图片不打）。 */
 export const KNOWLEDGE_BOOKLET_WATERMARK = "mvstudiopro.com";
+/**
+ * 去掉成品里的平铺水印文字（站长 2026-11-21：水印是为了宣传，一般用户的手册照打；付费用户的手册不打）。
+ * 只清空水印 SVG 里的文字，版面结构与其余样式逐字不变，所以分页与测量结果不受影响。
+ */
+export function stripKnowledgeBookletWatermark(html: string) {
+  return html.split(`>${KNOWLEDGE_BOOKLET_WATERMARK}</text>`).join("></text>");
+}
 export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1113-v19-fit-image";
 /**
  * 信息图入版上限（排版服务按 data-pdf-max-dim 执行；与审校缩图派生件 2048 一致，未超上限的 JPEG 原样入版）。
@@ -17,6 +24,8 @@ export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1113-v19-fit-image";
  */
 export const KNOWLEDGE_BOOKLET_IMAGE_MAX_DIM = 2048;
 export const KNOWLEDGE_BOOKLET_IMAGE_QUALITY = 0.85;
+/** 成品原图标记：排版服务见到即原样入版（见 pdf-worker/pdfImageCompression.ts）。 */
+export const KNOWLEDGE_BOOKLET_ORIGINAL_IMAGE_ATTR = 'data-pdf-original="1"';
 /** 用户 2026-11-11：每页留白不得超过版心 1/3（硬上限）；超过 FILL 阈值就开始补位（预告/纹样），不等到贴线。 */
 export const KNOWLEDGE_BOOKLET_MAX_WHITESPACE = 1 / 3;
 export const KNOWLEDGE_BOOKLET_FILL_THRESHOLD = 0.15;
@@ -139,7 +148,7 @@ function ornament(theme: KnowledgeBookletTheme) {
  * imageMode：见 KnowledgeBookletImageMode。
  * next：本片段最后一章之后的下一章（标题、章号），供页尾留白处放「下篇预告」（只印标题＋纹样框，不放图片）；null 表示全书末章；不传则只用纹样补白。
  */
-export function buildKnowledgeBookletHtml(input: { title: string; pages: KnowledgeBookletPage[]; theme?: KnowledgeBookletTheme; readingPages?: number; fragment?: boolean; decoration?: KnowledgeDecoration; chapterOffset?: number; imageMode?: KnowledgeBookletImageMode; next?: KnowledgeBookletNext }) {
+export function buildKnowledgeBookletHtml(input: { title: string; pages: KnowledgeBookletPage[]; theme?: KnowledgeBookletTheme; readingPages?: number; fragment?: boolean; decoration?: KnowledgeDecoration; chapterOffset?: number; imageMode?: KnowledgeBookletImageMode; next?: KnowledgeBookletNext; originalImages?: boolean }) {
   if (!input.pages.length) throw new Error("没有可分页的章节，原稿保留");
   if (new Set(input.pages.map(p=>p.id)).size !== input.pages.length) throw new Error("知识卡页编号重复");
   const validImage = (url: string) => /^data:image\/(png|jpeg|webp);base64,[a-zA-Z0-9+/=]+$|^https:\/\//.test(url);
@@ -158,7 +167,11 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
   const foot = (label: string) => `<footer><span>${escape(input.title)} <i>·</i> ${label}</span><span class="page-number"></span></footer>`;
   const offset = input.chapterOffset ?? 0;
   const no = (i: number) => String(offset + i + 1).padStart(2, "0");
-  const imageAttrs = `data-pdf-max-dim="${KNOWLEDGE_BOOKLET_IMAGE_MAX_DIM}" data-pdf-quality="${KNOWLEDGE_BOOKLET_IMAGE_QUALITY}"`;
+  // 成品原图（站长 2026-11-21「可以等比例放大缩小，不要牺牲像素」）：data-pdf-original="1" 且不带任何 max-dim/quality 标记，
+  // 排版服务原样入版（不缩放、不重编码：PNG 无损、JPEG 原字节）；版面上的显示尺寸仍由 CSS 等比缩放。
+  // 注意部署顺序：未更新的排版服务对无标记图会压到 1200/0.75，须先部署 pdf-worker 再部署服务端。
+  // 不传 originalImages（预览、预分页测量）时 HTML 与原先逐字相同。
+  const imageAttrs = input.originalImages ? KNOWLEDGE_BOOKLET_ORIGINAL_IMAGE_ATTR : `data-pdf-max-dim="${KNOWLEDGE_BOOKLET_IMAGE_MAX_DIM}" data-pdf-quality="${KNOWLEDGE_BOOKLET_IMAGE_QUALITY}"`;
   const titleHeader = (p: KnowledgeBookletPage, i: number) => `<header class="image-title"><div><p class="eyebrow"><span class="chapter-no">${no(i)}</span>图文知识</p><h1>${escape(p.headline)}</h1></div>${design?knowledgeMotifSvg(design.motif):ornamentHtml}</header>`;
   const columns = `<div class="reading-columns lead-columns"><div class="reading-column"></div><div class="reading-column"></div></div>`;
   // 直式图文同页：图在上、本章要点在下，同页放不下的才流入续页；不让单图独占一页。
@@ -174,7 +187,8 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
   const fillerOrnament = design ? knowledgeMotifSvg(design.motif) : ornamentHtml;
   // 续页页眉右上角：本章信息图的局部、四周淡出，纯装饰（站长 2026-11-13：可以采用信息图的局部；不要的是把图拆成两半）。
   // 只在单章片段（发布流程逐章渲染）且本章有图时放；低档标记控制体积，不影响首页整图的保清晰档。
-  const artWindow = input.pages.length === 1 && input.pages[0]!.imageUrl ? `<figure class="art-window" aria-hidden="true"><img alt="" src="${escape(input.pages[0]!.imageUrl)}" data-pdf-max-dim="1024" data-pdf-quality="0.8"></figure>` : "";
+  // 成品原图模式下与主图同一地址同一标记（排版服务共用同一图片对象，不另降采样、不另占体积）。
+  const artWindow = input.pages.length === 1 && input.pages[0]!.imageUrl ? `<figure class="art-window" aria-hidden="true"><img alt="" src="${escape(input.pages[0]!.imageUrl)}" ${input.originalImages ? KNOWLEDGE_BOOKLET_ORIGINAL_IMAGE_ATTR : 'data-pdf-max-dim="1024" data-pdf-quality="0.8"'}></figure>` : "";
   const readingHeader = `<header class="reading-title"><div><p class="eyebrow">图文对照 <span>／</span> 知识阅读</p><h2>${escape(input.title)}</h2><p class="reading-subtitle">${input.pages.map((p,i)=>`${String((input.chapterOffset ?? 0)+i+1).padStart(2,"0")} ${escape(p.headline)}`).join("　·　")}</p></div>${artWindow||(design?knowledgeMotifSvg(design.motif):ornamentHtml)}</header>`;
   // 同一脚本在预览和PDF环境中测量实际字体与块高，不以overflow:hidden强塞固定页数。
   const pagination = String.raw`

@@ -20,6 +20,8 @@ import {
   knowledgeReviewBatches,
   knowledgeBatchRequestId,
   knowledgeReviewSchema,
+  knowledgeChapterChars,
+  KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS,
   type KnowledgePublicationContext,
   type KnowledgeSource,
 } from "../../shared/knowledgePublication";
@@ -42,8 +44,25 @@ import {
 
 /** 固定1017，图文同合同；通道顺序由专用路由保留逐跳证据。 */
 export const KNOWLEDGE_VISUAL_ADVISOR_MODEL = KNOWLEDGE_PUBLICATION_MODEL;
-export const knowledgeSourceDigest = (source: KnowledgeSource) =>
-  createHash("sha256").update(JSON.stringify({ ...source, pages: source.pages.map(p => p.imageJobId ? { ...p, imageUrl: "" } : p) })).digest("hex");
+/**
+ * 原稿摘要（请求与回执身份）。大书（200 章 × 5.5 万字图外内文约 3300 万字节）每批整理都要对全书原稿算一次，
+ * 1121 演练实测占单批 CPU 约 0.1 秒、全书约 20 秒。以摘要输入的完整 JSON 文本为键做两条的小型缓存：
+ * 键就是被哈希的原文（逐字相同才命中），结果与直接计算逐字相同；只缓存百万字以上的大稿，小稿照旧直接算。
+ */
+const sourceDigestCache = new Map<string, string>();
+const SOURCE_DIGEST_CACHE_MIN_CHARS = 1_000_000, SOURCE_DIGEST_CACHE_ENTRIES = 2;
+export const knowledgeSourceDigest = (source: KnowledgeSource) => {
+  const text = JSON.stringify({ ...source, pages: source.pages.map(p => p.imageJobId ? { ...p, imageUrl: "" } : p) });
+  if (text.length < SOURCE_DIGEST_CACHE_MIN_CHARS) return createHash("sha256").update(text).digest("hex");
+  const hit = sourceDigestCache.get(text);
+  if (hit) { sourceDigestCache.delete(text); sourceDigestCache.set(text, hit); return hit; }
+  const digest = createHash("sha256").update(text).digest("hex");
+  sourceDigestCache.set(text, digest);
+  while (sourceDigestCache.size > SOURCE_DIGEST_CACHE_ENTRIES) sourceDigestCache.delete(sourceDigestCache.keys().next().value!);
+  return digest;
+};
+/** 单次审校/压缩请求的容量上限（本地保守核算：原文字节 + 每图 16384 + 4096，见 real.count）。 */
+export const KNOWLEDGE_REVIEW_REQUEST_MAX_TOKENS = 800000;
 export const knowledgeEvidencePrefix = (
   owner: number,
   documentId: string,
@@ -446,6 +465,28 @@ export const KNOWLEDGE_COMPRESSION_LANES = 4;
 export const KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS = 3;
 /** 篇幅压缩最多轮数：每轮一次正式三跳链调用（GLM FlashX@EvoLink → GLM@OpenRouter → DeepSeek v4.1 Flash 1017，超时/断线/空回/写坏由路由切下一跳）。 */
 export const KNOWLEDGE_COMPRESSION_MAX_ROUNDS = 4;
+/** 篇幅压缩按字节重新分组时，每组请求不超过单次容量的这一比例（留出指令与重试轮附加说明的余量）。 */
+export const KNOWLEDGE_COMPRESSION_CAPACITY_RATIO = 0.85;
+/**
+ * 篇幅压缩分组（1121）：原为固定三章一组。压缩请求带各章图外内文，三章各约 8.6 万字即超单次容量，整组从未发出、这些章拿不到压缩。
+ * 只有固定三章组超过单次容量（这样的组从来发不出去、没有任何回执）时才把该组按字节拆开：每组 ≤ 上限 × 安全比例、至多三章，
+ * 单章超大自成一组（仍超则由容量核算报出该组，不截断）。未超限的固定组原样保留——请求体、回执目录逐字不变。
+ */
+export async function knowledgeCompressionGroups(ids: readonly string[], measure: (ids: string[]) => Promise<number>) {
+  const groups: string[][] = [];
+  for (let i = 0; i < ids.length; i += KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS) {
+    const fixed = ids.slice(i, i + KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS);
+    if (fixed.length < 2 || await measure(fixed) <= KNOWLEDGE_REVIEW_REQUEST_MAX_TOKENS) { groups.push(fixed); continue; }
+    let current: string[] = [];
+    for (const id of fixed) {
+      const candidate = [...current, id];
+      if (current.length && await measure(candidate) > KNOWLEDGE_REVIEW_REQUEST_MAX_TOKENS * KNOWLEDGE_COMPRESSION_CAPACITY_RATIO) { groups.push(current); current = [id]; }
+      else current = candidate;
+    }
+    if (current.length) groups.push(current);
+  }
+  return groups;
+}
 const compressionRoundPrefix = (prefix: string, round: number) => round === 0 ? prefix : `${prefix}/round-${round}`;
 
 /**
@@ -539,7 +580,10 @@ export async function compressKnowledgeReviewToBudget(params: {
     // 一章一次又会让长册每次都多打几十次接口（站长 11-13：一次并发两到三章，走不同路由、互相兜底）。
     // 仍走整批请求的情形：超出章不多于一组；该轮已有整批成功回包（零调用回放）；该轮整批请求尚有未闭合回执（不另买，交路由按原请求处理）。
     const mixedKinds = expandIds.size > 0 && expandIds.size < after.length;
-    const split = (after.length > KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS || mixedKinds) && !wholeReplayed && !await knowledgeRouteReceiptUnresolved(deps.read, `${roundPrefix}/attempt-${attempt}`);
+    const measureGroup = async (group: string[]) => (await deps.count(roundRequest(new Set(group)))).totalTokens;
+    const resumable = !wholeReplayed && !await knowledgeRouteReceiptUnresolved(deps.read, `${roundPrefix}/attempt-${attempt}`);
+    // 超出章不多于一组时原走整批请求；整批请求超单次容量（从来发不出去）时同样改走分组。
+    const split = resumable && (after.length > KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS || mixedKinds || (after.length > 1 && await measureGroup(after.map(o => o.id)) > KNOWLEDGE_REVIEW_REQUEST_MAX_TOKENS));
     let replayed = wholeReplayed;
     if (split) {
       const order = after.map(o => o.id);
@@ -549,10 +593,8 @@ export async function compressKnowledgeReviewToBudget(params: {
       const pending = order.filter((_, i) => !hasPageRaw[i]);
       // 要压缩的章与要扩写的章分开成组（两种请求的指令不同），各自按章序三章一组。
       for (const kind of [pending.filter(id => !expandIds.has(id)), pending.filter(id => expandIds.has(id))])
-        for (let i = 0; i < kind.length; i += KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS) {
-          const group = kind.slice(i, i + KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS);
+        for (const group of await knowledgeCompressionGroups(kind, measureGroup))
           units.push({ prefix: `${roundPrefix}/group-${createHash("sha256").update(group.join(",")).digest("hex").slice(0, 16)}`, ids: group });
-        }
       receiptPrefixes.push(...units.map(u => u.prefix));
       replayed = (await Promise.all(units.map(u => deps.read(`${u.prefix}/raw-${attempt}.json`)))).every(Boolean);
       const headlineOf = new Map(after.map(o => [o.id, o.headline]));
@@ -940,6 +982,16 @@ export async function reviewKnowledgePublication(
     height: image.height,
     mimeType: image.mimeType,
   }));
+  // 单章过长（正文 + 图外内文超出单次整理容量）：发请求前给出明确业务错误（第几章、超出多少），不写请求、不调用模型。
+  // 已存请求（request-N.json）或回包的批次不在此拦截，交 getRaw 按原请求处理，旧回执身份不变。
+  if (!await deps.read(`${prefix}/raw-${context.attempt}.json`) && !await deps.read(`${prefix}/request-${context.attempt}.json`)) {
+    const { totalTokens } = await deps.count(request);
+    if (totalTokens > KNOWLEDGE_REVIEW_REQUEST_MAX_TOKENS) {
+      const largest = indices.reduce((a, b) => knowledgeChapterChars(source.pages[b]!) > knowledgeChapterChars(source.pages[a]!) ? b : a);
+      const page = source.pages[largest]!;
+      throw new Error(`第${largest + 1}章《${page.headline}》正文与图外内文过长，超过单次整理容量约${Math.ceil((totalTokens - KNOWLEDGE_REVIEW_REQUEST_MAX_TOKENS) / 3).toLocaleString("en-US")}字（本章共${knowledgeChapterChars(page).toLocaleString("en-US")}字，单章上限约${KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS.toLocaleString("en-US")}字）；请拆分该章后重新生成。未调用模型、未扣费，已完成的章节保留。`);
+    }
+  }
   const raw = await getRaw(
     deps,
     prefix,
@@ -1036,7 +1088,7 @@ async function getRaw(
     const capacity = await deps.count(request);
     await deps.save(`${prefix}/capacity-${attempt}.json`, capacity);
     // 内部保守容量边界，绝不截断全书事实或隐式增加未确认的付费调用。
-    if (capacity.totalTokens > 800000)
+    if (capacity.totalTokens > KNOWLEDGE_REVIEW_REQUEST_MAX_TOKENS)
       throw new Error(
         "全书事实索引超过本次审校容量；已完成批次与原稿已保留，未截断或重投"
       );

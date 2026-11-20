@@ -23,13 +23,17 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { knowledgePublicationPublicError } from "../../shared/knowledgePublicationPublic";
-import type { KnowledgePublicationExport } from "./knowledgePublicationExport";
+import type { KnowledgeExportProgress, KnowledgeExportProgressListener, KnowledgePublicationExport } from "./knowledgePublicationExport";
 import { knowledgeTimingLog } from "./knowledgePublicationCache";
 
+/**
+ * progress（1121，可选）：进程内的分项进度（共几段、已完成几段、当前在做什么）；旧调用方不读即不受影响。
+ * 结束后保留最后一次进度，部分完成/失败时如实停在实际位置。
+ */
 export type KnowledgeExportTaskState =
-  | { status: "running"; taskId: string; startedAt: number }
-  | { status: "succeeded"; taskId: string; startedAt: number; finishedAt: number; result: KnowledgePublicationExport }
-  | { status: "failed"; taskId: string; startedAt: number; finishedAt: number; error: string; retryable: boolean };
+  | { status: "running"; taskId: string; startedAt: number; progress?: KnowledgeExportProgress }
+  | { status: "succeeded"; taskId: string; startedAt: number; finishedAt: number; result: KnowledgePublicationExport; progress?: KnowledgeExportProgress }
+  | { status: "failed"; taskId: string; startedAt: number; finishedAt: number; error: string; retryable: boolean; progress?: KnowledgeExportProgress };
 
 /** 带版本的 JSON 存储：read 返回内容与 generation；write 以 ifGeneration 条件写入（null = 只在不存在时创建），条件不满足返回 ok:false。 */
 export type KnowledgeExportTaskStore = {
@@ -38,9 +42,9 @@ export type KnowledgeExportTaskStore = {
   put(name: string, value: unknown): Promise<void>;
 };
 
-type Task = { owner: number; key: string; state: KnowledgeExportTaskState; promise: Promise<void> };
+type Task = { owner: number; key: string; state: KnowledgeExportTaskState; promise: Promise<void>; progress?: KnowledgeExportProgress };
 type Deps = {
-  run: (owner: number, documentId: string, generation: string) => Promise<KnowledgePublicationExport>;
+  run: (owner: number, documentId: string, generation: string, onProgress?: KnowledgeExportProgressListener) => Promise<KnowledgePublicationExport>;
   /** 取导出成品目录（同目录去重）；取不到时按任务键去重即可。 */
   prefix?: (owner: number, documentId: string, generation: string) => Promise<string>;
   now?: () => number;
@@ -71,12 +75,16 @@ export const knowledgeExportLeaseName = (owner: number, renderKey: string) =>
 type Lease = { kind: "knowledge_export_lease_v1"; renderKey: string; holder: string; status: "running" | "succeeded" | "failed"; startedAt: number; heartbeatAt: number; finishedAt?: number };
 /** 完整成功 = 成功且已得到整册 PDF；只保存了 HTML、PDF 有段未完成的结果须可续做，不当成品复用。 */
 const complete = (state: KnowledgeExportTaskState) => state.status === "succeeded" && !!state.result?.pdfUrl && !state.result.pdfError;
+/** 等待他人租约时的说明（不含内部名）。 */
+const WAITING_PROGRESS: KnowledgeExportProgress = { phase: "waiting", done: 0, total: 0, label: "同一本手册的 PDF 正在另一处生成，完成后直接复用" };
 const safeLog = (error: unknown) => String((error as Error)?.message ?? error).replace(/(?:https?|gs):\/\/\S+/g, "[地址]").slice(0, 300);
 
 export function createKnowledgeExportTasks(deps: Deps) {
   const tasks = new Map<string, Task>();
   const starting = new Map<string, Promise<KnowledgeExportTaskState>>();
   const byPrefix = new Map<string, Promise<KnowledgePublicationExport>>();
+  /** 同一成品目录的进度订阅：后发起、复用进行中那一次的任务也能看到同一份进度。 */
+  const listeners = new Map<string, { last?: KnowledgeExportProgress; subscribers: Set<KnowledgeExportProgressListener> }>();
   /** 本进程正持有租约并在执行的渲染键。 */
   const holding = new Set<string>();
   const now = deps.now ?? Date.now;
@@ -97,7 +105,7 @@ export function createKnowledgeExportTasks(deps: Deps) {
     }
   };
   /** 取得渲染租约后执行一次导出；他人持有且心跳新鲜时等待，失联（staleMs 无心跳）即接管。 */
-  const runWithLease = async (store: KnowledgeExportTaskStore, owner: number, renderKey: string, run: () => Promise<KnowledgePublicationExport>) => {
+  const runWithLease = async (store: KnowledgeExportTaskStore, owner: number, renderKey: string, run: () => Promise<KnowledgePublicationExport>, onWait?: () => void) => {
     const name = knowledgeExportLeaseName(owner, renderKey);
     let generation: string;
     for (;;) {
@@ -106,7 +114,7 @@ export function createKnowledgeExportTasks(deps: Deps) {
       // 本进程自己留下的 running（上次释放没写进去）且本进程此刻并未在渲染这个目录：不必等失联，直接条件接管。
       const ownLeftover = lease?.holder === holder && !holding.has(renderKey);
       const busy = lease?.status === "running" && !ownLeftover && now() - Number(lease.heartbeatAt || 0) < staleMs;
-      if (busy) { await sleep(pollMs); continue; }
+      if (busy) { onWait?.(); await sleep(pollMs); continue; }
       if (lease?.status === "running") console.warn(`[knowledgeExport] lease stale, taking over holder=${String(lease.holder).slice(0, 8)} silentMs=${now() - Number(lease.heartbeatAt || 0)}`);
       const startedAt = now();
       const claimed = await store.write(name, { kind: "knowledge_export_lease_v1", renderKey, holder, status: "running", startedAt, heartbeatAt: startedAt } satisfies Lease, current ? current.generation : null);
@@ -149,17 +157,32 @@ export function createKnowledgeExportTasks(deps: Deps) {
       }
     }
   };
-  const execute = async (owner: number, documentId: string, generation: string) => {
+  const execute = async (owner: number, documentId: string, generation: string, onProgress: KnowledgeExportProgressListener) => {
     let prefix: string | undefined;
     try { prefix = deps.prefix ? await deps.prefix(owner, documentId, generation) : undefined; } catch { prefix = undefined; }
     const renderKey = prefix ? `${owner}|${prefix}` : `${owner}|${documentId}|${generation}`;
     const prefixKey = prefix ? `${owner}|${prefix}` : undefined;
     const existing = prefixKey ? byPrefix.get(prefixKey) : undefined;
-    if (existing) return existing;
-    const promise = deps.store ? runWithLease(deps.store, owner, renderKey, () => deps.run(owner, documentId, generation)) : deps.run(owner, documentId, generation);
+    if (existing) {
+      // 复用同目录进行中的那一次：订阅它的进度，并立即补上最近一次。
+      const channel = listeners.get(prefixKey!);
+      if (channel) { channel.subscribers.add(onProgress); if (channel.last) onProgress(channel.last); void existing.finally(() => channel.subscribers.delete(onProgress)).catch(() => undefined); }
+      return existing;
+    }
+    const channel = { last: undefined as KnowledgeExportProgress | undefined, subscribers: new Set<KnowledgeExportProgressListener>([onProgress]) };
+    const publish = (progress: KnowledgeExportProgress) => {
+      channel.last = progress;
+      for (const subscriber of Array.from(channel.subscribers)) { try { subscriber(progress); } catch { /* 只影响显示 */ } }
+    };
+    const run = () => deps.run(owner, documentId, generation, publish);
+    const promise = deps.store ? runWithLease(deps.store, owner, renderKey, run, () => { if (channel.last?.phase !== "waiting") publish(WAITING_PROGRESS); }) : run();
     if (prefixKey) {
       byPrefix.set(prefixKey, promise);
-      void promise.finally(() => { if (byPrefix.get(prefixKey) === promise) byPrefix.delete(prefixKey); }).catch(() => undefined);
+      listeners.set(prefixKey, channel);
+      void promise.finally(() => {
+        if (byPrefix.get(prefixKey) === promise) byPrefix.delete(prefixKey);
+        if (listeners.get(prefixKey) === channel) listeners.delete(prefixKey);
+      }).catch(() => undefined);
     }
     return promise;
   };
@@ -171,13 +194,16 @@ export function createKnowledgeExportTasks(deps: Deps) {
     const task: Task = { owner, key, state: { status: "running", taskId, startedAt }, promise: Promise.resolve() };
     // 任务记录写入与执行并行；记录写失败只记日志（状态仍在内存，重启后用户重新发起）。所有分支都已捕获，不产生未处理拒绝。
     const record = persist(owner, documentId, generation, task.state);
-    task.promise = execute(owner, documentId, generation).then(result => {
-      task.state = { status: "succeeded", taskId, startedAt, finishedAt: now(), result };
+    // 进度只在进程内更新（不每次写持久记录）；任务结束后不再接受迟到的进度。
+    const onProgress: KnowledgeExportProgressListener = progress => { if (task.state.status === "running") task.progress = progress; };
+    const last = () => (task.progress ? { progress: task.progress } : {});
+    task.promise = execute(owner, documentId, generation, onProgress).then(result => {
+      task.state = { status: "succeeded", taskId, startedAt, finishedAt: now(), result, ...last() };
       knowledgeTimingLog("knowledgeExport.task", startedAt, { ok: true, pages: result.totalPages });
     }, error => {
       const safe = knowledgePublicationPublicError(error);
       console.warn(`[knowledgeExport] task failed reason=${safeLog(error)}`);
-      task.state = { status: "failed", taskId, startedAt, finishedAt: now(), error: safe.message, retryable: safe.retryable };
+      task.state = { status: "failed", taskId, startedAt, finishedAt: now(), error: safe.message, retryable: safe.retryable, ...last() };
       knowledgeTimingLog("knowledgeExport.task", startedAt, { ok: false });
     }).then(async () => { await record; await persist(owner, documentId, generation, task.state); });
     tasks.set(taskId, task);
@@ -214,7 +240,7 @@ export function createKnowledgeExportTasks(deps: Deps) {
     status(owner: number, taskId: string): KnowledgeExportTaskState | null {
       const task = tasks.get(taskId);
       if (!task || task.owner !== owner) return null;
-      return task.state;
+      return task.state.status === "running" && task.progress ? { ...task.state, progress: task.progress } : task.state;
     },
     /** 测试用：等待任务结束（含记录写入）。 */
     async settled(taskId: string) { await tasks.get(taskId)?.promise; },
@@ -270,7 +296,7 @@ export function knowledgeExportTasks() {
     put: async (name, value) => (await sharedStore!).put(name, value),
   };
   shared ??= createKnowledgeExportTasks({
-    run: async (owner, documentId, generation) => (await import("./knowledgePublicationExport")).exportKnowledgePublication(owner, documentId, generation),
+    run: async (owner, documentId, generation, onProgress) => (await import("./knowledgePublicationExport")).exportKnowledgePublication(owner, documentId, generation, {}, {}, onProgress),
     prefix: async (owner, documentId, generation) => {
       const { loadKnowledgeBookLayoutView } = await import("./knowledgeBookLayout");
       // 与导出共用同一 generation 的视图缓存，几乎不增加耗时。

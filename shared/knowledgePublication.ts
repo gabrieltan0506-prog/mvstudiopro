@@ -13,6 +13,20 @@ import { knowledgeReadingSchema } from "./knowledgePublicationLayout";
  * 这里只是放宽上限（旧稿都 ≤5 万字，解析结果与摘要逐字不变）；真正的容量保护仍是整库 64MB 与审校分批。
  */
 export const KNOWLEDGE_SUPPLEMENT_MAX_CHARS = 400_000;
+/**
+ * 单章整理容量（汉字）：一章「正文 + 图外内文」不超过此字数时，单次逐章整理请求（服务端按 80 万字节核算，中文约 3 字节/字，
+ * 另含指令、预算合同、邻章上下文与配图额度约 5 万字节）必定装得下。图外内文合同上限是 40 万字，大于此值的章整理时必失败，
+ * 所以在建稿（确认出图之前）就报出是哪一章、超出多少（1121 演练钉住：24 万字装得下，约 26 万字即超）。
+ */
+export const KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS = 240_000;
+export const knowledgeChapterChars = (page: { body: string; supplement?: string }) => page.body.length + (page.supplement?.length || 0);
+/** 超出单章整理容量的章（index 从 0 起）；无则空数组。 */
+export function knowledgeChapterCapacityIssues(pages: readonly { headline: string; body: string; supplement?: string }[]) {
+  return pages.flatMap((page, index) => {
+    const chars = knowledgeChapterChars(page);
+    return chars > KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS ? [{ index, headline: page.headline, chars, excess: chars - KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS }] : [];
+  });
+}
 export type KnowledgePublicationPagination = { imagePages: number; totalPages: number };
 
 /** 知识卡专用合同；学习报告只提供视觉参考，不携带剧情、镜头或音轨字段。 */
@@ -114,6 +128,8 @@ export const knowledgePublicationSchema = z
     requestId: z.string().uuid(),
     infographicTemplateId: z.string().max(100).optional(),
     layoutConversationId: z.string().uuid().optional(),
+    /** 导出选项（站长 2026-11-21）：成品配图画质，像素不变；缺省 0.95。只影响导出成品，不影响审校与排版。 */
+    exportOptions: z.object({ imageQuality: z.union([z.literal(0.95), z.literal(0.85), z.literal(0.75), z.literal(0.65)]) }).strict().optional(),
     designMode: z.enum(["content"]).optional(),
     /**
      * 审校预算版本（站长 2026-11-20：总页数 ≤80、文字续页约 30 页）。只在首次开始审校（尚无并发分配、无章节审校结果）时写入，
@@ -246,6 +262,13 @@ export function knowledgeReviewBatches(source: KnowledgeSource): number[][] {
   }
   if (current.length) batches.push(current);
   return batches;
+}
+/**
+ * 整册排版的章节分组（每组 ≤4 章、≤2.4 万字）：顾问按组并行排版，排版输入的容量也按组判断。
+ * 分组与审校同一规则，排版章节无图外内文与配图任务，故只按正文字数与章数切分；排版发请求与容量预检共用此函数，二者不会分叉。
+ */
+export function knowledgeBookLayoutBatches(book: { title: string; pages: readonly { id: string; headline: string; body: string }[] }): number[][] {
+  return knowledgeReviewBatches({ title: book.title, pages: book.pages.map(page => ({ ...page, imageUrl: "" })) } as KnowledgeSource);
 }
 /** 同一页批/同一次失败重试固定一个事务编号；刷新、断线不产生新编号。 */
 export function knowledgeBatchRequestId(

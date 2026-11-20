@@ -188,6 +188,7 @@ it("素材按钮到实际单图请求保持同一报价和一次确认 KH-PRICE-
 });
 
 import { layoutFromSource, layoutLibrarySchema } from "../../../shared/editableLayout";
+import { saveLayoutLibraryToCloud } from "./editableLayoutCloudSave";
 describe("真实云稿句柄保存与恢复 KH-SYNC-02", () => {
   const studio = readFileSync(new URL("../components/platform/EditableLayoutStudio.tsx", import.meta.url), "utf8");
   const methods = studio.slice(studio.indexOf("    imageJobs("), studio.indexOf("    async start("));
@@ -204,6 +205,10 @@ describe("真实云稿句柄保存与恢复 KH-SYNC-02", () => {
     // 根因（1119）：生产方法改经 cloudSave 统一入口保存，旧夹具只给了 saveMutation，于是报 cloudSave is not defined。
     // 这里一并提取真实的 cloudSave，保留「不完整库拒绝保存」等原有保护。
     Object.assign(ctx, { partialLibrary: { current: false }, legacyPresent: { current: false }, legacyInMemory: { current: false }, legacyKey: "test", localStorage: { removeItem: noop } });
+    // 1121：cloudSave 默认只传变更。夹具起初没有云端基线（cloudBaseline=null）→ 首存走整库（断言落在 saveMutation 上）；
+    // 首存成功后有了基线，之后的保存走只传变更（saveDocumentsMutation，按基线版本 +1 回执）。
+    Object.assign(ctx, { saveLayoutLibraryToCloud, cloudBaseline: { current: null }, deltaUnsupported: { current: false },
+      saveDocumentsMutation: { mutateAsync: vi.fn(async (delta: any) => ({ generation: String(Number(delta.expectedGeneration) + 1), updatedAt: "2026-11-21T00:00:00.000Z" })) } });
     const cloudSave = studio.slice(studio.indexOf("  const cloudSave = async"), studio.indexOf("\n  useEffect(", studio.indexOf("  const cloudSave = async")));
     run(cloudSave + "\nglobalThis.handle = {" + methods + "};", ctx);
     return ctx;
@@ -217,6 +222,9 @@ describe("真实云稿句柄保存与恢复 KH-SYNC-02", () => {
     expect(ctx.saveMutation.mutateAsync.mock.calls[0][0].expectedGeneration).toBe("1");
     await ctx.handle.beginImageAttempt(firstJob, second, secondJob);
     await ctx.handle.attachImage(secondJob, secondJob, true);
+    // 后两次保存只传了改动的那一篇，原稿快照未变只传沿用标记。
+    expect(ctx.saveDocumentsMutation.mutateAsync).toHaveBeenCalledTimes(2);
+    expect(ctx.saveDocumentsMutation.mutateAsync.mock.calls[0][0]).toMatchObject({ expectedGeneration: "2", upserts: [{ retainSource: {} }] });
     const pub = ctx.current.current.library.documents[0].publication;
     expect(pub.imageAttempts.original.jobId).toBe(secondJob);
     expect(pub.imageReplacements).toEqual({ original: secondJob });

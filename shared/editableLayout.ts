@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Marked } from "marked";
-import { knowledgePublicationSchema, knowledgeManuscript } from "./knowledgePublication";
+import { knowledgePublicationSchema, knowledgeManuscript, knowledgeChapterCapacityIssues, KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS } from "./knowledgePublication";
 
 // 排版稿独立保存，不反写模型原稿，也不触发任何生成请求。
 export const layoutImageSchema = z
@@ -75,6 +75,11 @@ export function layoutFromSource(source: LayoutSource): EditableLayout {
   const pages = source.pages?.length
     ? source.pages
     : [{ headline: source.title, body: source.body, pageIndex: 1 }];
+  // 新建知识手册（确认出图之前）：单章正文 + 图外内文超出单次整理容量的，整理时必然失败——此处即报出第几章、超出多少。
+  if (source.kind === "knowledge-publication") {
+    const over = knowledgeChapterCapacityIssues(pages);
+    if (over.length) throw new Error(over.map(o => `第${o.index + 1}章《${o.headline}》正文与图外内文共${o.chars.toLocaleString("en-US")}字，超出单章整理上限${KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS.toLocaleString("en-US")}字（超出${o.excess.toLocaleString("en-US")}字）`).join("；") + "。请拆分过长的章后再生成；尚未出图、未扣费。");
+  }
   const sourcePages = pages.map(p => ({
     id: crypto.randomUUID(), headline: p.headline, body: p.body,
     imageUrl: source.images?.[p.pageIndex] || "",
