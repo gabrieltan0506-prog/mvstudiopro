@@ -33,9 +33,8 @@ function fakeInvoke(stats: { calls: number; maxRequest: number; maxResponse: num
   };
 }
 
-// 3000 节按要求逐批照数保留时，选节第 3 轮「没有压缩效果」（见下方复现），精华版 0 张图；
-// 规模探针让替身每批少留一节（strict），以测到精华版的后半程。
-for (const [n, strict] of [[20, false], [3000, true]] as const) {
+// 替身按要求逐批照数保留（选节分配 remainder-v1 后 3000 节也能选出目标节数）。
+for (const [n, strict] of [[20, false], [3000, false]] as const) {
   it(`${n} 节：两档准备 → 出图前准备，记录耗时与上限余量`, async () => {
     const { title, modules } = sourceMarkdown(n);
     const md = `# ${title}\n\n` + modules.map(m => `## ${m.headline}\n\n${m.body}`).join("\n\n");
@@ -86,11 +85,10 @@ for (const [n, strict] of [[20, false], [3000, true]] as const) {
   }, 300_000);
 }
 
-// 现状复现（knowledgeCardLevelDerive.ts 不在本分工，未改）：每批保留数 = max(2, ceil(目标×本批节数/当前节数)) 逐批向上取整，
+// 回归（2026-11-21 已修，见 knowledgeCardLevelDerive.allocation.test.ts）：旧分配下每批保留数 = max(2, ceil(目标×本批节数/当前节数)) 逐批向上取整，
 // 当前节数只略高于目标时各批保留数之和 ≥ 当前节数，该轮零压缩 → 抛「没有压缩效果」→ 精华选节整体失败、精华版 0 张图。
 // 3000 节、目标 120：第 1 轮 66 批各留 2 → 132 节；第 2 轮 4 批留 40+38+41+2=121；第 3 轮 3 批留 42/42、44/44、35/35 → 121，失败。
-// it.fails：断言写的是应有行为；修好后此用例会「意外通过」而报错，届时改回 it。
-it.fails("已知缺陷：3000 节默认目标 120 节，精华选节应成功（现第 3 轮零压缩而失败）", async () => {
+it("3000 节默认目标 120 节：精华选节成功（原第 3 轮零压缩而失败）", async () => {
   const { title, modules } = sourceMarkdown(3000);
   const md = `# ${title}\n\n` + modules.map(m => `## ${m.headline}\n\n${m.body}`).join("\n\n");
   const storage = new Map<string, any>();

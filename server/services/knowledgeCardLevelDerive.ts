@@ -272,6 +272,47 @@ export const __testDeriveGateways = deriveGateways;
 export type DeriveProgress = { doneBatches: number; totalBatches: number; pass: number };
 
 /**
+ * 选节保留数分配版本（2026-11-21）。旧分配：每批 max(2, ceil(目标×本批/当前))，逐批向上取整；
+ * 当前节数只略高于目标时各批之和 ≥ 当前节数，该轮零压缩并抛「没有压缩效果」（替身实测 300～4200 节的书全部命中）。
+ * remainder-v1：仅在「旧分配之和 ≥ 当前节数」（旧逻辑注定零压缩）的那一轮，以及最后一轮旧分配之和超过目标时，改按目标总数做最大余数分配，
+ * 各批之和恰为目标；其余各轮保留数、请求文字与旧逻辑逐字相同。只给新建任务开启（调用方写入版本标记），
+ * 旧任务续跑仍走旧分配，已存的逐批回执身份不变。
+ */
+export const KNOWLEDGE_SELECTION_ALLOCATION = "remainder-v1" as const;
+export type KnowledgeSelectionAllocation = typeof KNOWLEDGE_SELECTION_ALLOCATION;
+
+/** 旧分配（逐批向上取整，每批至少 2 节）。 */
+export function legacySelectionKeeps(batchSizes: readonly number[], current: number, target: number) {
+  return batchSizes.map(size => Math.max(2, Math.ceil((target * size) / current)));
+}
+
+/**
+ * 本轮各批保留数。未开新版，或旧分配之和 < 当前节数（且不是最后一轮超目标）时与旧分配逐项相同；
+ * 否则按 target 做最大余数分配（份额 target×本批/当前，先取整数部分，余数按小数部分从大到小、同大取靠前批补 1），
+ * 每批不超过本批节数，总和恰为 min(target, 当前节数−1)。保留数为 0 的批不发请求。
+ */
+export function selectionKeeps(batchSizes: readonly number[], current: number, target: number, allocation?: KnowledgeSelectionAllocation, finalPass = false) {
+  const legacy = legacySelectionKeeps(batchSizes, current, target);
+  const sum = legacy.reduce((a, b) => a + b, 0);
+  // 第二种同类问题：最后一轮（第 3 轮）逐批向上取整累加超过目标，旧逻辑就此停在目标之上（如 4200 节停在 121 节）。
+  if (allocation !== KNOWLEDGE_SELECTION_ALLOCATION || (sum < current && !(finalPass && sum > target))) return legacy;
+  const total = Math.max(1, Math.min(target, current - 1));
+  const quotas = batchSizes.map(size => (total * size) / current);
+  const keeps = quotas.map((q, i) => Math.min(batchSizes[i]!, Math.floor(q)));
+  let left = total - keeps.reduce((a, b) => a + b, 0);
+  const order = quotas.map((q, i) => ({ i, frac: q - Math.floor(q) })).sort((a, b) => b.frac - a.frac || a.i - b.i);
+  while (left > 0) {
+    let progressed = false;
+    for (const { i } of order) {
+      if (left <= 0) break;
+      if (keeps[i]! < batchSizes[i]!) { keeps[i]!++; left--; progressed = true; }
+    }
+    if (!progressed) break;
+  }
+  return keeps;
+}
+
+/**
  * 从完整稿挑选重点配图；全文始终由调用方独立保留。
  * 任何一批输出坏了（节数为 0 或远超要求）整次失败，不把半成品当成稿。
  */
@@ -283,6 +324,8 @@ export async function deriveKnowledgeCardCompact(params: {
   abortSignal?: AbortSignal;
   onProgress?: (p: DeriveProgress) => void | Promise<void>;
   chat?: typeof deriveChat;
+  /** 新建任务传 KNOWLEDGE_SELECTION_ALLOCATION；缺省 = 旧分配，请求逐字不变。 */
+  allocation?: KnowledgeSelectionAllocation;
 }): Promise<{ markdown: string; sections: number; targetSections: number; passes: number }> {
   const chat = params.chat || deriveChat;
   const model = params.model;
@@ -298,15 +341,18 @@ export async function deriveKnowledgeCardCompact(params: {
   while (current.length > target && passes < 3) {
     passes += 1;
     const batches = batchSections(current);
-    const outputs: string[] = new Array(batches.length);
+    const outputs: string[] = new Array(batches.length).fill("");
+    const keeps = selectionKeeps(batches.map(b => b.length), current.length, target, params.allocation, passes === 3);
     let doneBatches=0;
     await params.onProgress?.({doneBatches,totalBatches:batches.length,pass:passes});
     const workerCount=knowledgeStageConcurrency(batches.length,{max:KNOWLEDGE_MODEL_CHANNEL_MAX.openrouter+KNOWLEDGE_MODEL_CHANNEL_MAX.evolink});
     const settled=await Promise.allSettled(Array.from({length:workerCount},async(_,worker)=>{
     for (let i = worker; i < batches.length; i+=workerCount) {
       const batch = batches[i]!;
-      const keep = Math.max(2, Math.ceil((target * batch.length) / current.length));
+      const keep = keeps[i]!;
       params.abortSignal?.throwIfAborted();
+      // 最大余数分配给 0 的批整批不留，不发请求（只会出现在新分配的那一轮）。
+      if (!keep) { await params.onProgress?.({doneBatches:++doneBatches,totalBatches:batches.length,pass:passes}); continue; }
       const raw = await chat({
         selectionKey: `${passes}-${i}`,
         selectionKeep: keep,
