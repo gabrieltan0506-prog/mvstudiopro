@@ -23,7 +23,8 @@ export function knowledgePublicationHead(title: string, pagination?: { offset: n
 /** 预览与服务端导出调用同一排版器，保留已确认正文与真实校核提示。 */
 /** nextImage：旧参数，仅保留签名兼容（只校验格式）；下篇预告只印下一章标题，不再放其图片裁切条。末章自动标记全书完。 */
 /** imageMode：旧参数，仅保留签名兼容；传入 spread/auto 也一律按图文同页（整图）排版。 */
-export function knowledgePublicationChapter(doc: EditableLayout, review: KnowledgeReview, index: number, image: string, preview=false, nextImage="", imageMode?: KnowledgeBookletImageMode) {
+/** originalImage：成品渲染用原图（排版服务原样入版）；预览与预分页测量不传，HTML 与原先逐字相同。 */
+export function knowledgePublicationChapter(doc: EditableLayout, review: KnowledgeReview, index: number, image: string, preview=false, nextImage="", imageMode?: KnowledgeBookletImageMode, originalImage=false) {
   const page=doc.pages[index],checked=review.pages[index];
   if(!page || !checked || page.id!==checked.id) throw new Error("图文页身份不一致");
   if(page.imageUrl && !image) throw new Error(`第${index+1}页图片未载入，未输出缺图文件`);
@@ -43,7 +44,7 @@ export function knowledgePublicationChapter(doc: EditableLayout, review: Knowled
   if (!layout && doc.publication?.designMode === "content") throw new Error("请先让创作顾问重新排版；未用本地规则替代顾问方案");
   const decoration=design?contentDecoration(resolveKnowledgeDecoration(checked.reading?.decoration,page.headline),design):checked.reading?.decoration;
   // 审查疑点只保留在作者面板；最终读者正文不重新附加已删除或待核的主张。
-  return buildKnowledgeBookletHtml({title:doc.title,theme,fragment:true,chapterOffset:index,decoration,imageMode:mode,next,pages:[{id:page.id,headline:page.headline,body:page.body,imageUrl:image}]});
+  return buildKnowledgeBookletHtml({title:doc.title,theme,fragment:true,chapterOffset:index,decoration,imageMode:mode,next,pages:[{id:page.id,headline:page.headline,body:page.body,imageUrl:image}],...(originalImage?{originalImages:true}:{})});
 }
 export function buildKnowledgePublicationHtml(doc:EditableLayout,review:KnowledgeReview,images:Record<string,string>,preview=false) {
   return knowledgePublicationHead(doc.title)+doc.pages.map((p,i)=>knowledgePublicationChapter(doc,review,i,images[p.imageUrl]||"",preview,images[doc.pages[i+1]?.imageUrl||""]||"")).join("\n")+"</body></html>";
