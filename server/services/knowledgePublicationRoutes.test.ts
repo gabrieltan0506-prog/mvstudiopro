@@ -1399,3 +1399,39 @@ it('搜索发单前存待发送回执失败时零发单，收到结果后存档�
     expect(f.deps.fetch).toHaveBeenCalledTimes(state==='pending'?0:1);
   }
 });
+
+describe('心跳文件写入尽力而为（1120）',()=>{
+ const sse=(f:ReturnType<typeof make>)=>new Response([{model:OR_MODEL,choices:[{delta:{content:JSON.stringify(f.report)}}]},{choices:[{delta:{},finish_reason:'stop'}]}].map(c=>'data: '+JSON.stringify(c)+'\n\n').join('')+'data: [DONE]\n\n',{headers:{'Content-Type':'text/event-stream'}});
+ it('心跳写入失败只记日志，模型流照常完成，回执与原始回包照常落盘，不重买',async()=>{
+  const f=make();const logs:string[]=[];(f.deps as any).log=(l:string)=>logs.push(l);
+  const save=f.evidence.save;let heartbeatTries=0;
+  f.evidence.save=vi.fn(async(k:string,v:unknown)=>{if(k.endsWith('-heartbeat.json')){heartbeatTries++;throw new TypeError('fetch failed');}return save(k,v);});
+  f.deps.fetch.mockReset().mockResolvedValueOnce(sse(f));
+  const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  expect(out.gateway).toBe('openrouter');expect(f.deps.fetch).toHaveBeenCalledTimes(1);
+  expect(heartbeatTries).toBeGreaterThanOrEqual(1);
+  expect(f.storage.get('test/0/route-openrouter.json').state).toBe('received');
+  expect(f.storage.has('test/0/openrouter-response.json')).toBe(true);
+  expect(logs.some(l=>l.includes('reason=heartbeat_write_failed')&&l.includes('next=retry_on_next_bytes'))).toBe(true);
+  expect(logs.join('\n')).not.toMatch(/test-key/);
+ });
+ it('心跳写入卡住不阻塞读流：回执在心跳落定后写入，顺序不乱',async()=>{
+  const f=make();const order:string[]=[];let release!:()=>void;
+  const save=f.evidence.save;
+  f.evidence.save=vi.fn(async(k:string,v:unknown)=>{
+   if(k.endsWith('-heartbeat.json')){await new Promise<void>(r=>{release=r;});order.push('heartbeat');return save(k,v);}
+   if(k.endsWith('-response.json')){order.push('response');setTimeout(()=>release(),5);}
+   if(k.endsWith('route-openrouter.json'))order.push(`route:${(v as any).state}`);
+   return save(k,v);});
+  f.deps.fetch.mockReset().mockResolvedValueOnce(sse(f));
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
+  // 流读完（原始回包已存）时心跳仍在途：说明读流没有被心跳写入阻塞；回执晚于心跳。
+  expect(order).toEqual(['route:pending','response','heartbeat','route:received']);
+ });
+ it('pending 检查点写入失败仍中断且不发请求（防重复付费依据不降级）',async()=>{
+  const f=make();const save=f.evidence.save;
+  f.evidence.save=vi.fn(async(k:string,v:any)=>{if(k.endsWith('route-openrouter.json')&&v.state==='pending')throw new Error('gcs_upload_failed:403:x');return save(k,v);});
+  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('gcs_upload_failed:403');
+  expect(f.deps.fetch).not.toHaveBeenCalled();
+ });
+});

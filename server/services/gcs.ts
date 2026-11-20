@@ -71,6 +71,63 @@ async function awaitWithAbortSignal<T>(
   });
 }
 
+/**
+ * 单次存取时限（1120）：原来上传/stat/下载/列举都没有时限，连接卡住要等 undici 默认 300 秒，
+ * 整单因此被判无心跳。默认 60 秒（GCS_REQUEST_TIMEOUT_MS 可覆盖），大对象按体积每 10MB
+ * 再加 30 秒（GCS_REQUEST_TIMEOUT_PER_10MB_MS 可覆盖）；下载在拿到响应头后按 content-length 重新起算。
+ * 超时报 `gcs_<op>_failed:network:timeout_<ms>ms`，归入既有 network 分类供上层重试；
+ * 调用方自己的 signal 中止时原样抛调用方的中止原因，不改成超时。
+ * 只加时限，不改对象名、内容与 ifGenerationMatch 等写入条件。
+ */
+const GCS_DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+const GCS_DEFAULT_TIMEOUT_PER_10MB_MS = 30_000;
+const GCS_TIMEOUT_SIZE_STEP_BYTES = 10 * 1024 * 1024;
+
+export function gcsRequestTimeoutMs(bytes = 0): number {
+  const baseEnv = Number(process.env.GCS_REQUEST_TIMEOUT_MS);
+  const perEnv = Number(process.env.GCS_REQUEST_TIMEOUT_PER_10MB_MS);
+  const base = Number.isFinite(baseEnv) && baseEnv > 0 ? Math.floor(baseEnv) : GCS_DEFAULT_REQUEST_TIMEOUT_MS;
+  const per = Number.isFinite(perEnv) && perEnv >= 0 ? Math.floor(perEnv) : GCS_DEFAULT_TIMEOUT_PER_10MB_MS;
+  const size = Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+  return base + Math.floor(size / GCS_TIMEOUT_SIZE_STEP_BYTES) * per;
+}
+
+async function withGcsDeadline<T>(
+  op: string,
+  callerSignal: AbortSignal | undefined,
+  bytes: number,
+  run: (signal: AbortSignal, extendForBytes: (bytes: number) => void) => Promise<T>,
+): Promise<T> {
+  callerSignal?.throwIfAborted();
+  const controller = new AbortController();
+  let timedOut = false;
+  let limitMs = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let rejectTimeout: (error: Error) => void = () => undefined;
+  // 替身或底层连接不理会 signal 时，靠这条竞速保证在时限内返回。
+  const timeout = new Promise<never>((_, reject) => { rejectTimeout = reject; });
+  const arm = (ms: number) => {
+    if (timer) clearTimeout(timer);
+    limitMs = ms;
+    timer = setTimeout(() => {
+      timedOut = true;
+      const error = new Error(`gcs_${op}_failed:network:timeout_${ms}ms`);
+      controller.abort(error);
+      rejectTimeout(error);
+    }, ms);
+  };
+  arm(gcsRequestTimeoutMs(bytes));
+  const signal = callerSignal ? AbortSignal.any([callerSignal, controller.signal]) : controller.signal;
+  try {
+    return await Promise.race([run(signal, n => { if (!timedOut) arm(gcsRequestTimeoutMs(n)); }), timeout]);
+  } catch (error) {
+    if (timedOut && !callerSignal?.aborted) throw new Error(`gcs_${op}_failed:network:timeout_${limitMs}ms`);
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function parseServiceAccountJson(raw: string) {
   try {
     return JSON.parse(raw);
@@ -259,7 +316,6 @@ export async function uploadBufferToGcs(params: {
   }
 
   const objectName = normalizeObjectName(params.objectName);
-  const accessToken = await getVertexAccessToken();
   const uploadUrl = new URL(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o`);
   uploadUrl.searchParams.set("uploadType", "media");
   uploadUrl.searchParams.set("name", objectName);
@@ -271,22 +327,26 @@ export async function uploadBufferToGcs(params: {
     uploadUrl.searchParams.set("userProject", userProject);
   }
 
-  // 調用方若在 GCP / Fly 與桶同區或近區，單次 media upload 延遲通常很低（與 Vertex 流水線銜接時宜同區桶）。
-  const response = await fetch(uploadUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": params.contentType || "application/octet-stream",
-      "Content-Length": String(params.buffer.byteLength),
-    },
-    body: new Uint8Array(params.buffer),
-    signal: params.signal,
-  });
+  const json = await withGcsDeadline("upload", params.signal, params.buffer.byteLength, async signal => {
+    const accessToken = await awaitWithAbortSignal(getVertexAccessToken(), signal);
+    // 調用方若在 GCP / Fly 與桶同區或近區，單次 media upload 延遲通常很低（與 Vertex 流水線銜接時宜同區桶）。
+    const response = await fetch(uploadUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": params.contentType || "application/octet-stream",
+        "Content-Length": String(params.buffer.byteLength),
+      },
+      body: new Uint8Array(params.buffer),
+      signal,
+    });
 
-  const json = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(`gcs_upload_failed:${response.status}:${JSON.stringify(json || {})}`);
-  }
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(`gcs_upload_failed:${response.status}:${JSON.stringify(body || {})}`);
+    }
+    return body;
+  });
 
   return {
     bucket,
@@ -330,38 +390,42 @@ export async function uploadStreamToGcs(params: {
   }
 
   const objectName = normalizeObjectName(params.objectName);
-  let accessToken: string;
-  try {
-    // 终审 P2：鉴权等待也要听 signal——OAuth 停滞时上传必须能退出，
-    // 否则调用方 finally 关不了文件流、删不了临时目录。
-    // 注意：这只让本次上传的等待可取消，不取消底层鉴权网络请求本身。
-    accessToken = await awaitWithAbortSignal(getVertexAccessToken(), params.signal);
-  } catch (err) {
-    await cancelStream();
-    throw err;
-  }
   const uploadUrl = new URL(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o`);
   uploadUrl.searchParams.set("uploadType", "media");
   uploadUrl.searchParams.set("name", objectName);
   const userProject = getGcsUserProject();
   if (userProject) uploadUrl.searchParams.set("userProject", userProject);
 
-  const response = await fetch(uploadUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": params.contentType || "application/octet-stream",
-      "Content-Length": String(params.contentLength),
-    },
-    body: params.stream,
-    // Node fetch 传流式 body 必须声明；否则 undici 拒绝
-    duplex: "half",
-    signal: params.signal,
-  } as RequestInit & { duplex: "half" });
+  let streamHandedOff = false;
+  try {
+    await withGcsDeadline("upload", params.signal, params.contentLength, async signal => {
+      // 终审 P2：鉴权等待也要听 signal——OAuth 停滞时上传必须能退出，
+      // 否则调用方 finally 关不了文件流、删不了临时目录。
+      // 注意：这只让本次上传的等待可取消，不取消底层鉴权网络请求本身。
+      const accessToken = await awaitWithAbortSignal(getVertexAccessToken(), signal);
+      streamHandedOff = true;
+      const response = await fetch(uploadUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": params.contentType || "application/octet-stream",
+          "Content-Length": String(params.contentLength),
+        },
+        body: params.stream,
+        // Node fetch 传流式 body 必须声明；否则 undici 拒绝
+        duplex: "half",
+        signal,
+      } as RequestInit & { duplex: "half" });
 
-  const json = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(`gcs_upload_failed:${response.status}:${JSON.stringify(json || {})}`);
+      const json = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(`gcs_upload_failed:${response.status}:${JSON.stringify(json || {})}`);
+      }
+    });
+  } catch (err) {
+    // 鉴权阶段失败（流尚未交给 fetch）沿用原行为取消流；超时后 fetch 已被中止，再取消一次也无害。
+    if (!streamHandedOff || /:network:timeout_/.test(String((err as Error)?.message))) await cancelStream();
+    throw err;
   }
   return { bucket, objectName, gcsUri: `gs://${bucket}/${objectName}` };
 }
@@ -383,8 +447,6 @@ export async function uploadBufferToGcsIfAbsent(params: {
   const bucket = params.bucket || getGcsBucketName();
   if (!bucket) throw new Error("GCS bucket is not configured");
   const objectName = normalizeObjectName(params.objectName);
-  params.signal?.throwIfAborted();
-  const accessToken = await awaitWithAbortSignal(getVertexAccessToken(), params.signal);
   params.signal?.throwIfAborted();
   const uploadUrl = new URL(
     `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o`,
@@ -411,36 +473,39 @@ export async function uploadBufferToGcsIfAbsent(params: {
         Buffer.from(`\r\n--${boundary}--\r\n`, "utf8"),
       ])
     : params.buffer;
-  const response = await fetch(uploadUrl, {
-    method: "POST",
-    signal: params.signal,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": hasMetadata
-        ? `multipart/related; boundary=${boundary}`
-        : params.contentType || "application/octet-stream",
-      "Content-Length": String(multipartBody.byteLength),
-    },
-    body: new Uint8Array(multipartBody),
+  return withGcsDeadline("conditional_upload", params.signal, multipartBody.byteLength, async signal => {
+    const accessToken = await awaitWithAbortSignal(getVertexAccessToken(), signal);
+    params.signal?.throwIfAborted();
+    const response = await fetch(uploadUrl, {
+      method: "POST",
+      signal,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": hasMetadata
+          ? `multipart/related; boundary=${boundary}`
+          : params.contentType || "application/octet-stream",
+        "Content-Length": String(multipartBody.byteLength),
+      },
+      body: new Uint8Array(multipartBody),
+    });
+    if (response.status === 412) {
+      await response.text().catch(() => "");
+      return { created: false };
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`gcs_conditional_upload_failed:${response.status}:${text.slice(0, 300)}`);
+    }
+    const metadata = await response.json().catch(() => null) as { generation?: unknown } | null;
+    const generation = String(metadata?.generation || "").trim();
+    return { created: true, ...(generation ? { generation } : {}) };
   });
-  if (response.status === 412) {
-    await response.text().catch(() => "");
-    return { created: false };
-  }
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`gcs_conditional_upload_failed:${response.status}:${text.slice(0, 300)}`);
-  }
-  const metadata = await response.json().catch(() => null) as { generation?: unknown } | null;
-  const generation = String(metadata?.generation || "").trim();
-  return { created: true, ...(generation ? { generation } : {}) };
 }
 
 export async function downloadGcsObject(params: {
   gcsUri: string;
 }): Promise<{ buffer: Buffer; bucket: string; objectName: string }> {
   const { bucket, objectName } = parseGsUri(params.gcsUri);
-  const accessToken = await getVertexAccessToken();
   const downloadUrl = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`);
   downloadUrl.searchParams.set("alt", "media");
   const userProject = getGcsUserProject();
@@ -448,20 +513,26 @@ export async function downloadGcsObject(params: {
     downloadUrl.searchParams.set("userProject", userProject);
   }
 
-  const response = await fetch(downloadUrl, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
+  const buffer = await withGcsDeadline("download", undefined, 0, async (signal, extendForBytes) => {
+    const accessToken = await awaitWithAbortSignal(getVertexAccessToken(), signal);
+    const response = await fetch(downloadUrl, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      signal,
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`gcs_download_failed:${response.status}:${text}`);
+    }
+    extendForBytes(Number(response.headers?.get?.("content-length") || 0));
+    return Buffer.from(await response.arrayBuffer());
   });
 
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`gcs_download_failed:${response.status}:${text}`);
-  }
-
   return {
-    buffer: Buffer.from(await response.arrayBuffer()),
+    buffer,
     bucket,
     objectName,
   };
@@ -672,7 +743,6 @@ export async function listGcsObjectNamesByPrefix(params: {
   // 上限 1000：原来钳到 500，而原生精读的集号范围是 1–999，
   // 一个系列超过 500 张卡后列举会截断，后面的集被当成「没跑过」重复付费。
   const maxResults = params.allPages ? Number.POSITIVE_INFINITY : Math.max(1, Math.min(1000, Math.floor(Number(params.maxResults) || 100)));
-  const accessToken = await getVertexAccessToken();
   const userProject = getGcsUserProject();
   const names: string[] = [];
   let pageToken = "";
@@ -686,35 +756,41 @@ export async function listGcsObjectNamesByPrefix(params: {
     if (userProject) url.searchParams.set("userProject", userProject);
     // 列举是断点续跑的「已入库核对」真源，一次 fetch failed 就把整轮学习判死太脆：
     // 网络层错误与 5xx/429 退避重试三次，4xx 仍即时失败（0904 实锤：fetch failed 直接判死）。
-    let response: Response | undefined;
+    type ListPage = { items?: Array<{ name?: string }>; nextPageToken?: string; error?: unknown } | null;
+    let page: { status: number; ok: boolean; json: ListPage } | undefined;
     let lastNetworkError: unknown;
     for (let attempt = 0; attempt < GCS_LIST_MAX_ATTEMPTS; attempt += 1) {
       if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1_000 * attempt));
       try {
-        response = await fetch(url, {
-          method: "GET",
-          headers: { Authorization: `Bearer ${accessToken}` },
+        // 每页每次尝试单独计时（含读正文）：卡住的列举按 network 失败重试，不再等 300 秒。
+        page = await withGcsDeadline("list", undefined, 0, async signal => {
+          const accessToken = await awaitWithAbortSignal(getVertexAccessToken(), signal);
+          const response = await fetch(url, {
+            method: "GET",
+            headers: { Authorization: `Bearer ${accessToken}` },
+            signal,
+          });
+          if (response.status >= 500 || response.status === 429) {
+            // 要重试的响应把 body 读掉，别占着连接
+            await response.text().catch(() => undefined);
+            return { status: response.status, ok: false, json: null };
+          }
+          return { status: response.status, ok: response.ok, json: (await response.json().catch(() => null)) as ListPage };
         });
         lastNetworkError = undefined;
-        if (response.status < 500 && response.status !== 429) break;
-        // 要重试的响应把 body 读掉，别占着连接
-        if (attempt < GCS_LIST_MAX_ATTEMPTS - 1) await response.text().catch(() => undefined);
+        if (page.status < 500 && page.status !== 429) break;
       } catch (error) {
         lastNetworkError = error;
-        response = undefined;
+        page = undefined;
       }
     }
-    if (!response) {
+    if (!page) {
       const detail = lastNetworkError instanceof Error ? lastNetworkError.message : String(lastNetworkError);
       throw new Error(`gcs_list_failed:network:${detail}（已重试 ${GCS_LIST_MAX_ATTEMPTS} 次）`);
     }
-    const json = (await response.json().catch(() => null)) as {
-      items?: Array<{ name?: string }>;
-      nextPageToken?: string;
-      error?: unknown;
-    } | null;
-    if (!response.ok) {
-      throw new Error(`gcs_list_failed:${response.status}:${JSON.stringify(json?.error || json || {})}`);
+    const json = page.json;
+    if (!page.ok) {
+      throw new Error(`gcs_list_failed:${page.status}:${JSON.stringify(json?.error || json || {})}`);
     }
     for (const item of json?.items || []) {
       const name = String(item?.name || "").trim();
@@ -743,7 +819,6 @@ export async function deleteGcsObject(params: {
   }
 
   const objectName = normalizeObjectName(params.objectName);
-  const accessToken = await getVertexAccessToken();
   const deleteUrl = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`);
   const userProject = getGcsUserProject();
   if (userProject) {
@@ -753,22 +828,26 @@ export async function deleteGcsObject(params: {
     deleteUrl.searchParams.set("ifGenerationMatch", params.ifGenerationMatch);
   }
 
-  const response = await fetch(deleteUrl, {
-    method: "DELETE",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
+  await withGcsDeadline("delete", undefined, 0, async signal => {
+    const accessToken = await awaitWithAbortSignal(getVertexAccessToken(), signal);
+    const response = await fetch(deleteUrl, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      signal,
+    });
 
-  if (response.status === 404) return;
-  // 412 = 对象已被别的写入替换，此时删除会毁掉新版本，必须停手
-  if (response.status === 412) {
-    throw new Error("gcs_delete_generation_conflict");
-  }
-  if (!response.ok) {
-    const json = await response.json().catch(() => null);
-    throw new Error(`gcs_delete_failed:${response.status}:${JSON.stringify(json || {})}`);
-  }
+    if (response.status === 404) return;
+    // 412 = 对象已被别的写入替换，此时删除会毁掉新版本，必须停手
+    if (response.status === 412) {
+      throw new Error("gcs_delete_generation_conflict");
+    }
+    if (!response.ok) {
+      const json = await response.json().catch(() => null);
+      throw new Error(`gcs_delete_failed:${response.status}:${JSON.stringify(json || {})}`);
+    }
+  });
 }
 
 /**
@@ -781,22 +860,21 @@ export async function statGcsObjectVersion(params: {
   signal?: AbortSignal;
 }): Promise<{ bucket: string; objectName: string; generation: string; etag?: string; byteLength?: number; crc32c?: string }> {
   const { bucket, objectName } = parseGsUri(params.gcsUri);
-  const accessToken = await awaitWithAbortSignal(
-    getVertexAccessToken(),
-    params.signal,
-  );
   const userProject = getGcsUserProject();
   const metaUrl = new URL(
     `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`,
   );
   if (userProject) metaUrl.searchParams.set("userProject", userProject);
-  const metaRes = await fetch(metaUrl, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${accessToken}` },
-    signal: params.signal,
+  const meta = await withGcsDeadline("stat", params.signal, 0, async signal => {
+    const accessToken = await awaitWithAbortSignal(getVertexAccessToken(), signal);
+    const metaRes = await fetch(metaUrl, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal,
+    });
+    if (!metaRes.ok) throw new Error(`gcs_stat_failed:${metaRes.status}`);
+    return (await metaRes.json()) as { generation?: string; etag?: string; size?: string; crc32c?: string };
   });
-  if (!metaRes.ok) throw new Error(`gcs_stat_failed:${metaRes.status}`);
-  const meta = (await metaRes.json()) as { generation?: string; etag?: string; size?: string; crc32c?: string };
   const generation = String(meta.generation || "").trim();
   if (!generation) throw new Error("gcs_stat_no_generation");
   return {
@@ -817,7 +895,6 @@ export async function downloadGcsObjectVersioned(params: {
   const version = await statGcsObjectVersion(params);
   params.signal?.throwIfAborted();
   const { bucket, objectName, generation } = version;
-  const accessToken = await getVertexAccessToken();
   const userProject = getGcsUserProject();
   const metaUrl = new URL(
     `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`,
@@ -826,16 +903,21 @@ export async function downloadGcsObjectVersioned(params: {
   const mediaUrl = new URL(metaUrl.toString());
   mediaUrl.searchParams.set("alt", "media");
   mediaUrl.searchParams.set("generation", generation);
-  const mediaRes = await fetch(mediaUrl, {
-    method: "GET",
-    signal: params.signal,
-    headers: { Authorization: `Bearer ${accessToken}` },
+  // 已从 stat 得知体积：按体积放宽时限（57MB 的 verified.json 约 60+180 秒）。
+  const buffer = await withGcsDeadline("download", params.signal, version.byteLength ?? 0, async signal => {
+    const accessToken = await awaitWithAbortSignal(getVertexAccessToken(), signal);
+    const mediaRes = await fetch(mediaUrl, {
+      method: "GET",
+      signal,
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!mediaRes.ok) {
+      throw new Error(`gcs_download_failed:${mediaRes.status}`);
+    }
+    return Buffer.from(await mediaRes.arrayBuffer());
   });
-  if (!mediaRes.ok) {
-    throw new Error(`gcs_download_failed:${mediaRes.status}`);
-  }
   return {
-    buffer: Buffer.from(await mediaRes.arrayBuffer()),
+    buffer,
     bucket,
     objectName,
     generation,

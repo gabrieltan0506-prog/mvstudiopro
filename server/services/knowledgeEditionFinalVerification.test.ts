@@ -101,8 +101,9 @@ it('读取已存核实章节遇到一次断线时原位重试，沿用旧结果�
   expect(invoke).not.toHaveBeenCalled();
 });
 
-it("云存储瞬态读错最多重试四次，嵌套检查不放大重试次数",async()=>{
+it("云存储瞬态读错最多原地重试七次（约5.9分钟），嵌套检查不放大重试次数",async()=>{
   const {guardKnowledgeEditionEvidence}=await import("./knowledgeEditionRecovery");
+  vi.spyOn(Math,"random").mockReturnValue(0.5); // 抖动取中值，便于断言
   vi.useFakeTimers();
   try {
     for(const succeeds of [true,false]){
@@ -110,15 +111,15 @@ it("云存储瞬态读错最多重试四次，嵌套检查不放大重试次数"
       const readTimes:number[]=[];
       const evidence=guardKnowledgeEditionEvidence(guardKnowledgeEditionEvidence({...setup().evidence,read:async()=>{
         readTimes.push(Date.now()-start);
-        if(readTimes.length===5 && succeeds)return {ok:true};
+        if(readTimes.length===8 && succeeds)return {ok:true};
         throw new TypeError("fetch failed");
       }}));
       const result=evidence.read("test");
       const assertion=succeeds?expect(result).resolves.toEqual({ok:true}):expect(result).rejects.toThrow("章节检查点");
       await vi.runAllTimersAsync();await assertion;
-      expect(readTimes).toEqual([0,3000,8000,23000,53000]);
+      expect(readTimes).toEqual([0,3000,8000,23000,53000,113000,233000,353000]);
     }
-  }finally{vi.useRealTimers();}
+  }finally{vi.useRealTimers();vi.restoreAllMocks();}
 });
 
 it('915个乱序完成批次恢复时首报915，只对177个缺口检索，成稿按原章顺序',async()=>{
@@ -170,8 +171,16 @@ it('完成清单暂时读不到时停止，不把清单当空重派',async()=>{
   const f=setup(),invoke=vi.fn(),bodies=['正文。<!-- 待核：资料 -->'];
   const digest=createHash('sha256').update(JSON.stringify(bodies)).digest('hex');
   f.data.set('test/input.json',{digest,bodies});
-  const evidence={...f.evidence,listKeys:async()=>{throw Error('gcs_list_failed:503');}};
-  await expect(verifyKnowledgeEditionManuscripts(bodies,evidence,invoke)).rejects.toThrow('章节检查点');
+  let lists=0;
+  const evidence={...f.evidence,listKeys:async()=>{lists++;throw Error('gcs_list_failed:503');}};
+  // 1120：列举外层也走原地重试窗口（约5.9分钟），用替身时钟走完。
+  vi.useFakeTimers();
+  try {
+    const result=verifyKnowledgeEditionManuscripts(bodies,evidence,invoke).catch(e=>e);
+    await vi.runAllTimersAsync();
+    expect(String((await result)?.message)).toContain('章节检查点');
+  }finally{vi.useRealTimers();}
+  expect(lists).toBe(8);
   expect(invoke).not.toHaveBeenCalled();
 });
 
@@ -196,6 +205,7 @@ it("待发送回执写入断线：四次延迟重写同一对象，只在保存�
   const upstream=vi.fn();
   const saved=new Map<string,unknown>();
   const writes:{key:string;value:unknown;ms:number}[]=[];
+  vi.spyOn(Math,"random").mockReturnValue(0.5); // 1120 起重试带 ±20% 抖动，取中值即原间隔
   vi.useFakeTimers();
   try {
     const start=Date.now();
@@ -212,5 +222,5 @@ it("待发送回执写入断线：四次延迟重写同一对象，只在保存�
     expect(writes.map(w=>w.ms)).toEqual([0,3000,8000,23000,53000]);
     expect(writes.every(w=>w.key==="search/test.pending.json" && w.value===request)).toBe(true);
     expect(saved.size).toBe(1);expect(upstream).toHaveBeenCalledTimes(1);
-  }finally{vi.useRealTimers();}
+  }finally{vi.useRealTimers();vi.restoreAllMocks();}
 });
