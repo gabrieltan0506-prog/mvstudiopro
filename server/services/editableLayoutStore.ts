@@ -41,17 +41,21 @@ type StoreDeps = {
   stat?: (params: { gcsUri: string }) => Promise<{ generation: string }>;
   /**
    * 旧格式（v1，全文内联）整库序列化超过此字节数时，改写 v2（大段图外内文外置）。
-   * 未提供时读环境变量 EDITABLE_LAYOUT_INLINE_MAX_BYTES，默认 16MB（与整库缓存上限相同：更大的库本来就无法缓存，
-   * 每次读写都要整库下载）。设为 67108864 即「只在旧格式会被 64MB 上限拒绝时才外置」的最保守档。
+   * 未提供时读环境变量 EDITABLE_LAYOUT_INLINE_MAX_BYTES，默认 48MB（保守档，见 inlineMaxBytes 的说明；可降到 16MB，与整库缓存上限相同）。设为 67108864 即「只在旧格式会被 64MB 上限拒绝时才外置」的最保守档。
    */
   inlineMaxBytes?: number;
 };
 const real: StoreDeps = { read: params => downloadGcsObjectVersioned(params), write: params => uploadBufferToGcs(params), stat: params => statGcsObjectVersion(params) };
 const LIBRARY_MAX_BYTES = 64 * 1024 * 1024;
+/** 新格式默认门槛（保守档）：整库旧格式序列化超过 48MB 才外置。 */
+export const EDITABLE_LAYOUT_INLINE_DEFAULT_MAX_BYTES = 48 * 1024 * 1024;
 function inlineMaxBytes(deps: StoreDeps) {
   if (deps.inlineMaxBytes !== undefined) return deps.inlineMaxBytes;
   const env = Number(process.env.EDITABLE_LAYOUT_INLINE_MAX_BYTES);
-  return Number.isSafeInteger(env) && env > 0 ? Math.min(env, LIBRARY_MAX_BYTES) : 16 * 1024 * 1024;
+  // 首次上线取保守门槛 48MB（主代理 2026-11-21）：只有快撞 64MB 上限的库才转成新格式。
+  // 新格式的库退回旧代码后读不出（稿不丢，但要等新代码回来），所以先只让「否则就存不进去」的库转换；
+  // 线上观察无误后再用环境变量降到 16MB（与整库缓存上限一致）。
+  return Number.isSafeInteger(env) && env > 0 ? Math.min(env, LIBRARY_MAX_BYTES) : EDITABLE_LAYOUT_INLINE_DEFAULT_MAX_BYTES;
 }
 /** 外置原文按 sha256 缓存（内容不可变，键不含账号也不会串稿：对象地址仍按账号读取并校验摘要）。约 4800 万字上限。 */
 export const layoutExternalTextCache = new ExternalTextCache(48_000_000);

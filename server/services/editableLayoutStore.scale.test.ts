@@ -96,7 +96,8 @@ describe("大书与多本大书：外置图外内文（v2）", () => {
     await writeLayoutLibrary(OWNER, edited, "1", { ...before, inlineMaxBytes: Number.POSITIVE_INFINITY } as any, noMedia);
     const beforeMs = performance.now() - t, beforeUpload = before.uploads.reduce((s, u) => s + u.bytes, 0);
 
-    const after = storage();
+    // 默认门槛是保守档 48MB（6 本共约 46MB 不会触发）；这里显式用 16MB 档验证外置路径。
+    const after = Object.assign(storage(), { inlineMaxBytes: 16 * 1024 * 1024 });
     t = performance.now();
     await writeLayoutLibrary(OWNER, library, "0", after as any, noMedia);
     const firstMs = performance.now() - t, firstUpload = after.uploads.reduce((s, u) => s + u.bytes, 0);
