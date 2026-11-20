@@ -5,7 +5,7 @@ vi.mock("./evolinkGptImage2.js", () => ({ isEvolinkGptImage2Configured: () => tr
 vi.mock("./wavespeedGptImage2.js", () => ({ isWavespeedGptImage2Configured: () => true, postWavespeedGptImage2AndUpload: providers.wave }));
 vi.mock("./openrouterGptImage2.js", () => ({ isOpenRouterGptImage2Configured: () => true, postOpenRouterGptImage2AndUpload: providers.router }));
 import { generatePlatformCompositeSheetImage, generateGptImage2FromRawEnglishPrompt } from "./proxyImageService";
-const base = { kind: "single_page_knowledge_card" as const, userId: 7, title: "光合作用", scriptContext: "# 光合作用\n植物通过叶片利用光能。", notePageIndex: 1, notePageTotal: 1, knowledgeCardReferencePageUrls: ["https://test.invalid/reference.png"] };
+const base = { approvedImageModel: "gpt-image-2.6-sunburst" as const, kind: "single_page_knowledge_card" as const, userId: 7, title: "光合作用", scriptContext: "# 光合作用\n植物通过叶片利用光能。", notePageIndex: 1, notePageTotal: 1, knowledgeCardReferencePageUrls: ["https://test.invalid/reference.png"] };
 beforeEach(() => { vi.resetAllMocks(); Object.values(providers).forEach(p => p.mockResolvedValue(null)); vi.stubGlobal("fetch", vi.fn(() => { throw new Error("禁止测试联网"); })); });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 // 1119 C1：手册只准 2.6 Sunburst；缺档/空偏好由服务端绑定，绝不落到 Flare。
@@ -51,6 +51,10 @@ it("未指定升级的其他像素业务维持旧默认", async () => {
   expect(providers.openai.mock.calls[0][2].exactModel).toBe("gpt-image-2.5-sunburst");
 });
 
+it.each([undefined, "sunburst"] as const)("仅凭偏好 %s 不能代替本次授权", async openaiImageVariant => {
+  await expect(generatePlatformCompositeSheetImage({ ...base, approvedImageModel: undefined, openaiImageVariant })).rejects.toThrow("未获授权");
+  for (const provider of Object.values(providers)) expect(provider).not.toHaveBeenCalled();
+});
 it("手册收到 Flare 档位：任何供应商请求之前拒绝", async () => {
   await expect(generatePlatformCompositeSheetImage({ ...base, openaiImageVariant: "flare" })).rejects.toThrow("未获授权");
   for (const provider of Object.values(providers)) expect(provider).not.toHaveBeenCalled();

@@ -345,6 +345,7 @@ describe("1119 C1/C2/C3 生成入口", () => {
     expect(summary.imageTierZh).toBe(handbookVariant.HANDBOOK_IMAGE_TIER_LABEL_ZH);
     expect(summary.imageTierZh).not.toMatch(/gpt|sunburst|flare|openai|evolink/i);
     expect(summary.imageModelDebug).toBe("gpt-image-2.6-sunburst");
+    expect(ctx.generateCustomNoteMutation.mutateAsync.mock.calls[0][0].approvedImageModel).toBe(summary.imageModelDebug);
     expect(ctx.generateCustomNoteMutation.mutateAsync.mock.calls[0][0].openaiImageVariant).toBe("sunburst");
     expect(ctx.layoutStudioRef.current.start).toHaveBeenCalledTimes(1);
   });

@@ -29,7 +29,7 @@ it("官方失败只同模型回落，不整链二次购买或换模型", async (
 });
 it("旧知识卡仍使用原页切片和原稿参考，不误用人物参考", async () => {
   providers.openai.mockResolvedValue("https://test.invalid/legacy.png");
-  await generatePlatformCompositeSheetImage({ ...base, viralCreation: false, singleGraphicPage: undefined, notePageIndex: 1, notePageTotal: 1 });
+  await generatePlatformCompositeSheetImage({ ...base, approvedImageModel: "gpt-image-2.6-sunburst", viralCreation: false, singleGraphicPage: undefined, notePageIndex: 1, notePageTotal: 1 });
   const args = providers.openai.mock.calls[0];
   expect(args[0]).not.toContain("独立可发布的小红书图文笔记正文图片");
   expect(args[2].imageUrls || []).not.toContain(base.referencePhotoUrl);

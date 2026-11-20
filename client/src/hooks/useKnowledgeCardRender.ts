@@ -146,7 +146,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
       if (!url) {
         const quote = await trpcUtils.client.mvAnalysis.quoteKnowledgeCardForGeneration.mutate(await handbookQuoteInput(text, settings.distillModel));
         const price = knowledgeCardCreditsForPageIndex(idx + 1, quote.billingModel);
-        if (!window.confirm(`补出第 ${idx + 1}/${total} 页，${price} 积分，是否继续？`)) return;
+        if (!window.confirm(`补出第 ${idx + 1}/${total} 页，${price} 积分，是否批准本页使用${HANDBOOK_IMAGE_TIER_LABEL_ZH}出图？`)) return;
         const replacementRequestId = knowledgeCardPageTasks.begin("platform_composite_sheet_progress");
         replacementJobId = await knowledgeIllustrationJobId(workbenchUserKey, replacementRequestId);
         const studio = layoutStudioRef.current;
@@ -157,7 +157,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
         renderedImageJobsRef.current = originalJobs!.slice();
         renderedImageJobsRef.current[idx] = replacementJobId;
         renderedSubmittedImageJobsRef.current?.add(replacementJobId);
-        url = await generateCustomNoteOne(text, "single_page_knowledge_card", undefined, { index: idx + 1, total }, idx % 2 === 0 ? "openai" : "evolink", { ...settings, billingModel: quote.billingModel }, { requestId: replacementRequestId, jobId: replacementJobId });
+        url = await generateCustomNoteOne(text, "single_page_knowledge_card", undefined, { index: idx + 1, total }, idx % 2 === 0 ? "openai" : "evolink", { ...settings, billingModel: quote.billingModel, approvedImageModel: HANDBOOK_IMAGE_MODEL }, { requestId: replacementRequestId, jobId: replacementJobId });
       }
       if (runId !== renderRunIdRef.current) return; // 期间已重新整套生成，旧结果丢弃
       const next = customNoteImagesRef.current.slice();
@@ -276,6 +276,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
      * 实测：确认期间改了正文/版式，付费请求发的仍是旧闭包的稿，用户看到的和买到的对不上。
      */
     snapshot?: {
+      approvedImageModel?: typeof HANDBOOK_IMAGE_MODEL;
       distillModel: typeof customNoteDistillModel;
       billingModel: string;
       subjectPosition: typeof customNoteSubjectPosition;
@@ -320,6 +321,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
             ...(imageProvider ? { imageProvider } : {}),
             // 多页入口显式分配官方/EvoLink；未指定通道的旧入口仍使用服务端默认。
             // 手册配图只准授权档（1119 C1）：不读前台偏好——偏好为空/缺失时会落到 Flare；服务端另行绑定并拒绝其他档位。
+            approvedImageModel: snapshot?.approvedImageModel,
             openaiImageVariant: HANDBOOK_IMAGE_VARIANT,
             // 版式走独立字段进出图指令；拼进 scriptContext 会被当正文印出来
             ...((snapshot ? snapshot.infographicTemplateId : customNoteInfographicTemplateId)
@@ -642,6 +644,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
         setCustomNoteImageLower(null);
         setKnowledgeCardPdfUrl(null);
         const renderSnapshot = {
+          approvedImageModel: HANDBOOK_IMAGE_MODEL,
           distillModel: pendingSnapshot.distillModel,
           billingModel: pendingSnapshot.billingModel,
           subjectPosition: pendingSnapshot.subjectPosition,

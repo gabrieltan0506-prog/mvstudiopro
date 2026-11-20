@@ -21,9 +21,9 @@ export const HANDBOOK_IMAGE_QUALITY = "high" as const;
 /** 普通用户只看到档名；精确模型名只在 debug 面板显示。 */
 export const HANDBOOK_IMAGE_TIER_LABEL_ZH = "高精度档 · 4K";
 
-/** 手册配图请求的档位门禁：未带档位由服务端绑定授权档；带了其他档位即拒绝。 */
-export function handbookImageVariantAuthorized(raw: unknown): boolean {
-  return raw === undefined || raw === null || raw === HANDBOOK_IMAGE_VARIANT;
+/** 手册逐页提交必须带本次确认的完整型号；旧偏好不能充当授权。 */
+export function handbookImageVariantAuthorized(model: unknown, variant: unknown): boolean {
+  return model === HANDBOOK_IMAGE_MODEL && (variant == null || variant === HANDBOOK_IMAGE_VARIANT);
 }
 
 export const OPENAI_IMAGE_MODEL_BY_VARIANT: Record<OpenAiImageVariant, string> = {

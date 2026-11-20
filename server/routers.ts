@@ -1,4 +1,4 @@
-import { HANDBOOK_IMAGE_VARIANT, handbookImageVariantAuthorized } from "../shared/openaiImageVariant";
+import { HANDBOOK_IMAGE_MODEL, HANDBOOK_IMAGE_VARIANT, handbookImageVariantAuthorized } from "../shared/openaiImageVariant";
 import { markKnowledgeImageFailed } from "./services/knowledgeImageFailure";
 import type { KnowledgeImageRetryReason } from "../shared/knowledgeImageRetry";
 import { resolveKnowledgeCardDistillModel } from "../shared/knowledgeCardDistillModels";
@@ -8323,6 +8323,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             /** 仅 single_page_knowledge_card：本页首发供应商（多页并发时页轮流分给两家；另一家自动兜底） */
             imageProvider: z.enum(["evolink", "openai", "wavespeed"]).optional(),
             /** OpenAI 官方模型档位（flare 默认 / sunburst），与画布共用开关 */
+            approvedImageModel: z.literal(HANDBOOK_IMAGE_MODEL).optional(),
             openaiImageVariant: z.enum(["flare", "sunburst"]).optional(),
             /**
              * 仅 single_page_knowledge_card：图文可视化版式 id（`shared/infographicNoteTemplates`）。
@@ -8368,8 +8369,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           })
           .superRefine((data, ctx) => {
             // 手册配图授权（1119 C1）：只准 GPT Image 2.6 Sunburst 高质量。校验在 zod 层，早于占位预留与扣费；
-            // 未带档位由服务端绑定授权档，带了其他档位（含 Flare）一律拒绝。
-            if (data.kind === "single_page_knowledge_card" && !data.viralCreation && !handbookImageVariantAuthorized(data.openaiImageVariant)) {
+            if (data.approvedImageModel && (data.kind !== "single_page_knowledge_card" || data.viralCreation)) {
+              ctx.addIssue({ code: z.ZodIssueCode.custom, message: "本次模型授权仅适用于手册配图", path: ["approvedImageModel"] });
+            }
+            if (data.kind === "single_page_knowledge_card" && !data.viralCreation && !handbookImageVariantAuthorized(data.approvedImageModel, data.openaiImageVariant)) {
               ctx.addIssue({ code: z.ZodIssueCode.custom, message: "本次配图档位未获授权，请刷新页面后重新确认；未扣费、未提交出图", path: ["openaiImageVariant"] });
             }
             if (Boolean(data.scriptContext) === Boolean(data.manuscriptDigest)) {
@@ -8821,6 +8824,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 subjectPosition: input.subjectPosition,
                 knowledgeCardReferencePageUrls,
                 knowledgeCardImageProvider: input.imageProvider,
+            approvedImageModel: input.approvedImageModel,
             openaiImageVariant: handbookImageRequest ? HANDBOOK_IMAGE_VARIANT : input.openaiImageVariant,
               });
 
@@ -8918,6 +8922,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             subjectPosition: input.subjectPosition,
             knowledgeCardReferencePageUrls,
             knowledgeCardImageProvider: input.imageProvider,
+            approvedImageModel: input.approvedImageModel,
             openaiImageVariant: handbookImageRequest ? HANDBOOK_IMAGE_VARIANT : input.openaiImageVariant,
           });
         } catch (error: any) {

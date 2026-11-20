@@ -12,7 +12,7 @@ vi.mock("./jobs/compositeSheetLiveProgress.js", () => ({ attachCompositeSheetFlo
 vi.mock("./services/tier-provider-routing", async original => ({ ...await original<any>(), resolveWatermark: async () => false }));
 vi.mock("./services/paidJobLedger.js", async original => ({ ...await original<any>(), registerActiveJob: async () => {}, refundCreditsOnFailure: async () => ({ refunded: true }), unregisterActiveJob: async () => {}, markSettlementPending: async () => true }));
 import { appRouter } from "./routers";
-const base = { sceneId: "auth-test", title: "水循环", scriptContext: "# 水循环\n\n蒸发后凝结成雨。", kind: "single_page_knowledge_card" as const, notePageIndex: 1, notePageTotal: 1, distillModel: "deepseek-v4.1-flash-1017", confirmedPageCredits: 30, pageRequestId: "12345678-1234-4123-8123-123456789abc" };
+const base = { sceneId: "auth-test", title: "水循环", scriptContext: "# 水循环\n\n蒸发后凝结成雨。", approvedImageModel: "gpt-image-2.6-sunburst" as const, kind: "single_page_knowledge_card" as const, notePageIndex: 1, notePageTotal: 1, distillModel: "deepseek-v4.1-flash-1017", confirmedPageCredits: 30, pageRequestId: "12345678-1234-4123-8123-123456789abc" };
 const caller = () => appRouter.createCaller({ user: { id: 7, role: "user" } } as never);
 beforeEach(() => {
   vi.resetAllMocks();
@@ -22,6 +22,10 @@ beforeEach(() => {
   mocks.image.mockResolvedValue("https://test.invalid/ok.png");
 });
 describe("手册配图授权（服务端绑定）", () => {
+  it.each([undefined,"sunburst","flare"] as const)("缺少本次完整型号授权时拒绝偏好 %s", async openaiImageVariant => {
+    await expect(caller().mvAnalysis.generatePlatformCompositeSheet({ ...base, approvedImageModel: undefined, openaiImageVariant })).rejects.toThrow("未获授权");
+    for (const mock of [mocks.reserve,mocks.credits,mocks.deduct,mocks.image]) expect(mock).not.toHaveBeenCalled();
+  });
   it("Flare 档位：零占位、零扣费、零出图", async () => {
     await expect(caller().mvAnalysis.generatePlatformCompositeSheet({ ...base, openaiImageVariant: "flare" })).rejects.toThrow("未获授权");
     expect(mocks.reserve).not.toHaveBeenCalled();
@@ -29,7 +33,7 @@ describe("手册配图授权（服务端绑定）", () => {
     expect(mocks.deduct).not.toHaveBeenCalled();
     expect(mocks.image).not.toHaveBeenCalled();
   });
-  it.each([undefined, "sunburst"] as const)("档位 %s（含旧客户端缺字段）由服务端绑定 Sunburst", async variant => {
+  it.each([undefined, "sunburst"] as const)("明确批准完整型号后，档位 %s 由服务端绑定 Sunburst", async variant => {
     await caller().mvAnalysis.generatePlatformCompositeSheet({ ...base, ...(variant ? { openaiImageVariant: variant } : {}) });
     await vi.waitFor(() => expect(mocks.image).toHaveBeenCalledTimes(1));
     expect(mocks.image.mock.calls[0][0]).toMatchObject({ openaiImageVariant: "sunburst", viralCreation: false, kind: "single_page_knowledge_card" });

@@ -53,7 +53,7 @@ async function stage(text: string, user = 7, skip: number[] = []) {
     await caller(user).mvAnalysis.stageKnowledgeCardManuscriptChunk({ digest, index, count, totalChars: text.length, text: text.slice(index * KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS, (index + 1) * KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS) });
   return { digest, count };
 }
-const pageInput = (extra: Record<string, unknown>) => ({ sceneId: "big", title: "大书", kind: "single_page_knowledge_card" as const, distillModel: MODEL, confirmedPageCredits: 30, notePageIndex: 1, pageRequestId: "12345678-1234-4123-8123-123456789abc", openaiImageVariant: "sunburst" as const, ...extra });
+const pageInput = (extra: Record<string, unknown>) => ({ sceneId: "big", title: "大书", approvedImageModel: "gpt-image-2.6-sunburst" as const, kind: "single_page_knowledge_card" as const, distillModel: MODEL, confirmedPageCredits: 30, notePageIndex: 1, pageRequestId: "12345678-1234-4123-8123-123456789abc", openaiImageVariant: "sunburst" as const, ...extra });
 const BIG = book(2_000_000);
 const BIG_PLAN = planKnowledgeCardPages(BIG);
 
@@ -135,7 +135,7 @@ describe("出图：摘要路径在占位与扣费之前校验", () => {
     const text = book(150_000), plan = planKnowledgeCardPages(text);
     const quote = await caller().mvAnalysis.quoteKnowledgeCardForGeneration({ markdown: text, distillModel: MODEL });
     expect(quote.pageCount).toBe(plan.pageCount);
-    const input = { sceneId: "s", title: "t", scriptContext: text, kind: "single_page_knowledge_card" as const, distillModel: MODEL, confirmedPageCredits: 30, notePageIndex: 1, notePageTotal: plan.pageCount, pageRequestId: "12345678-1234-4123-8123-123456789abc", openaiImageVariant: "sunburst" as const };
+    const input = { sceneId: "s", title: "t", scriptContext: text, approvedImageModel: "gpt-image-2.6-sunburst" as const, kind: "single_page_knowledge_card" as const, distillModel: MODEL, confirmedPageCredits: 30, notePageIndex: 1, notePageTotal: plan.pageCount, pageRequestId: "12345678-1234-4123-8123-123456789abc", openaiImageVariant: "sunburst" as const };
     await caller().mvAnalysis.generatePlatformCompositeSheet(input);
     await vi.waitFor(() => expect(mocks.image).toHaveBeenCalledTimes(1));
     expect(mocks.reserve.mock.calls[0][0]).toEqual({ userId: "7", requestId: input.pageRequestId, params: { ...input } });

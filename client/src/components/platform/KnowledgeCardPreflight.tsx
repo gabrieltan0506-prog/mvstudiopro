@@ -134,7 +134,7 @@ export function KnowledgeCardPreflight({
             onClick={onConfirm}
             className="rounded-xl bg-[#ff4fb8] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110"
           >
-            确认出图
+            批准本次使用{summary?.imageTierZh}出图
           </button>
         </DialogFooter>
       </DialogContent>

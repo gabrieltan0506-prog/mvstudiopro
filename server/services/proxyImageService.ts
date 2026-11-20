@@ -1633,6 +1633,7 @@ export async function generatePlatformCompositeSheetImage(options: {
    */
   knowledgeCardImageProvider?: "evolink" | "openai" | "wavespeed";
   /** OpenAI 官方模型档位（flare/sunburst），画布与知识卡共用开关 */
+  approvedImageModel?: typeof HANDBOOK_IMAGE_MODEL;
   openaiImageVariant?: OpenAiImageVariant | null;
   /**
    * 仅 3×4 分段拼接：本次生成是「长图」的第 index/total 段（storyboard/xhs）。
@@ -1689,7 +1690,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   const isKnowledgeCard = k === "single_page_knowledge_card";
   const isKnowledgeHandbook = isKnowledgeCard && !options.viralCreation;
   // 手册配图授权（1119 C1）：服务端绑定 2.6 Sunburst；调用方传来其他档位即在任何占位/供应商请求之前拒绝。
-  if (isKnowledgeHandbook && !handbookImageVariantAuthorized(options.openaiImageVariant)) {
+  if (isKnowledgeHandbook && !handbookImageVariantAuthorized(options.approvedImageModel, options.openaiImageVariant)) {
     throw new Error("本次配图档位未获授权，未提交出图");
   }
   const isGraphicPage = isKnowledgeCard && options.viralCreation === true && options.singleGraphicPage === true;

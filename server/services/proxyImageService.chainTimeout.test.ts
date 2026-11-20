@@ -8,7 +8,7 @@ vi.mock("./wavespeedGptImage2.js", () => ({ isWavespeedGptImage2Configured: () =
 vi.mock("./openrouterGptImage2.js", () => ({ isOpenRouterGptImage2Configured: () => true, postOpenRouterGptImage2AndUpload: providers.router }));
 import { generatePlatformCompositeSheetImage } from "./proxyImageService";
 import { knowledgeImageMayRetry } from "../../shared/knowledgeImageRetry";
-const base = { kind: "single_page_knowledge_card" as const, userId: 7, title: "光合作用", scriptContext: "# 光合作用\n植物通过叶片利用光能。", notePageIndex: 1, notePageTotal: 1, knowledgeCardReferencePageUrls: [] as string[] };
+const base = { approvedImageModel: "gpt-image-2.6-sunburst" as const, kind: "single_page_knowledge_card" as const, userId: 7, title: "光合作用", scriptContext: "# 光合作用\n植物通过叶片利用光能。", notePageIndex: 1, notePageTotal: 1, knowledgeCardReferencePageUrls: [] as string[] };
 beforeEach(() => {
   vi.resetAllMocks();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });

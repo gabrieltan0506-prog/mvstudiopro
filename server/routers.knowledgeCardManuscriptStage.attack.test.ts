@@ -66,7 +66,7 @@ const noSideEffects = () => {
   expect(mocks.deduct).not.toHaveBeenCalled(); expect(mocks.image).not.toHaveBeenCalled();
 };
 const RID = "12345678-1234-4123-8123-123456789abc";
-const base = { sceneId: "big", title: "大书", kind: "single_page_knowledge_card" as const, distillModel: MODEL, openaiImageVariant: "sunburst" as const };
+const base = { sceneId: "big", title: "大书", approvedImageModel: "gpt-image-2.6-sunburst" as const, kind: "single_page_knowledge_card" as const, distillModel: MODEL, openaiImageVariant: "sunburst" as const };
 
 beforeEach(() => {
   vi.clearAllMocks(); mocks.objects.clear(); mocks.readFail.on = false; mocks.uploadFail.on = false; mocks.downloads.length = 0;

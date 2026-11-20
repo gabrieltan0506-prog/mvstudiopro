@@ -18,7 +18,7 @@ import { KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS, planKnowledgeCardPages } from '../
 const caller = () => appRouter.createCaller({ user: { id: 7, role: "user" } } as never);
 const base = {
   sceneId: "pricing-test", title: "水循环", scriptContext: "# 水循环\n\n蒸发后凝结成雨。",
-  kind: "single_page_knowledge_card" as const, notePageIndex: 1, notePageTotal: 1,
+  approvedImageModel: "gpt-image-2.6-sunburst" as const, kind: "single_page_knowledge_card" as const, notePageIndex: 1, notePageTotal: 1,
   distillModel: "deepseek-v4.1-flash-1017", confirmedPageCredits: 30,
 };
 beforeEach(() => {
