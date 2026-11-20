@@ -10,6 +10,13 @@ export type KnowledgeBookletPage = { id: string; headline: string; body: string;
 export type KnowledgeBookletTheme = "fusion_chinese_garden" | "fusion_ink_mountains" | "fusion_coastal_lighthouse" | "fusion_glasshouse_garden" | "fusion_maple_bridge" | "fusion_snow_monastery";
 /** 手册每页的半透明平铺水印（用户 2026-11-11 定：图文手册生成时打上，单张图片不打）。 */
 export const KNOWLEDGE_BOOKLET_WATERMARK = "mvstudiopro.com";
+/**
+ * 去掉成品里的平铺水印文字（站长 2026-11-21：水印是为了宣传，一般用户的手册照打；付费用户的手册不打）。
+ * 只清空水印 SVG 里的文字，版面结构与其余样式逐字不变，所以分页与测量结果不受影响。
+ */
+export function stripKnowledgeBookletWatermark(html: string) {
+  return html.split(`>${KNOWLEDGE_BOOKLET_WATERMARK}</text>`).join("></text>");
+}
 export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1113-v19-fit-image";
 /**
  * 信息图入版上限（排版服务按 data-pdf-max-dim 执行；与审校缩图派生件 2048 一致，未超上限的 JPEG 原样入版）。

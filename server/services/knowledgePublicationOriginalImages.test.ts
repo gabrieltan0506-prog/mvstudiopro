@@ -34,7 +34,9 @@ const own = (h: string) => `data-source-headline="${h}"`;
 const thumb = (uri: string) => `https://test.invalid/thumb/${encodeURIComponent(uri)}`;
 const original = (uri: string) => `https://test.invalid/original/${encodeURIComponent(uri)}`;
 
-function book(chapters: number, imageBytes: number) {
+/** 派生件地址（替身）：原像素 JPEG，按质量档分开存放。 */
+const derivative = (uri: string, q: number) => `${uri.replace(/\.png$/, "")}/export-full.q${q}.jpg`;
+function book(chapters: number, imageBytes: number, derivativeBytes: (q: number) => number = () => 4 * 1024 * 1024) {
   const images: Record<number, string> = {};
   for (let i = 1; i <= chapters; i++) images[i] = `gs://test-bucket/img-${i}.png`;
   const doc = layoutFromSource({ kind: "knowledge-publication", owner: "7", sourceId: `orig-${chapters}`, title: "原图测试", body: "",
@@ -56,6 +58,7 @@ function book(chapters: number, imageBytes: number) {
     image: vi.fn(async () => ({ buffer: Buffer.alloc(imageBytes), mimeType: "image/png", width: 3840, height: 2160, sha256: SHA })),
     imageUrl: vi.fn(async (uri: string) => thumb(uri)),
     originalImageUrl: vi.fn(async (uri: string) => original(uri)),
+    exportImage: vi.fn(async (uri: string, quality: number) => ({ uri: derivative(uri, quality), bytes: derivativeBytes(quality), width: 3840, height: 2160, quality })),
     read: vi.fn(async (name: string) => storage.get(name) || null),
     save: vi.fn(async (name: string, buffer: Buffer) => { storage.set(name, buffer); }),
     file: vi.fn(async (name: string, path: string) => { const data = await readFile(path); storage.set(name, data); return data.length; }),
@@ -88,16 +91,18 @@ describe("成品用原图、测量用缩图（图文手册 PDF / 阅读稿）", 
       for (const tag of tags) expect(tag).toContain('data-pdf-original="1"');
     }
     // 每章成品渲染引用的正是本章原图。
-    f.doc.pages.forEach((p, i) => expect(rendered.find(h => h.includes(own(p.headline)))).toContain(original(p.imageUrl)));
-    expect(rendered[0]).toContain(original(f.doc.pages[0]!.imageUrl));
+    // 每章成品渲染引用的正是本章原图的 q95 派生件（原像素 JPEG），不是原 PNG、也不是缩图。
+    f.doc.pages.forEach(p => { const h = rendered.find(x => x.includes(own(p.headline)))!; expect(h).toContain(original(derivative(p.imageUrl, 95))); expect(h).not.toContain(original(p.imageUrl) + '"'); });
+    expect(result.imageQuality).toBe(95);
+    expect(result.imageBytes).toBe(6 * 4 * 1024 * 1024);
     // 测量与成品同一版式（去掉图地址与原图标记后逐字相同），只是图源不同。
-    const strip = (h: string) => h.replace(/https:\/\/test\.invalid\/(thumb|original)\//g, "IMG/").replace(/ ?data-pdf-original="1"| ?data-pdf-max-dim="\d+"| ?data-pdf-quality="[\d.]+"/g, "");
+    const strip = (h: string) => h.replace(/https:\/\/test\.invalid\/(thumb|original)\/[^"]+/g, "IMG").replace(/ ?data-pdf-original="1"| ?data-pdf-max-dim="\d+"| ?data-pdf-quality="[\d.]+"/g, "");
     const renderedNoHead = rendered.map(h => strip(h.replace(/<body[^>]*>/, "<body>"))).sort();
     expect(measured.map(h => strip(h.replace(/<body[^>]*>/, "<body>"))).sort()).toEqual(renderedNoHead);
   });
 
   it("原图（>4MB/张）渲染降到 4 路并发，测量仍 8 路；瞬时故障渲染多重试一次", async () => {
-    const f = book(20, 6 * 1024 * 1024);
+    const f = book(20, 15 * 1024 * 1024, () => Math.round(4.3 * 1024 * 1024)); // 实测 q95 派生件 3.97–4.27MB
     let flaky = 2;
     const realPdf = f.deps.pdf.getMockImplementation()!;
     f.deps.pdf.mockImplementation(async (html: string) => {
@@ -110,27 +115,29 @@ describe("成品用原图、测量用缩图（图文手册 PDF / 阅读稿）", 
     expect(f.stats.measureMax).toBe(8);
   }, 30_000);
 
-  it("版本隔离：成品目录换成 orig1，旧 url2 成品不被复用（照常渲染）、也不删；重复导出只结算一次", async () => {
-    expect(KNOWLEDGE_EXPORT_IMAGE_TRANSPORT).toBe("orig1");
+  it("版本隔离：成品目录为 full-q95，旧 url2 / orig1 成品不被复用（照常渲染）、也不删；重复导出复用、只结算一次", async () => {
+    expect(KNOWLEDGE_EXPORT_IMAGE_TRANSPORT).toBe("full");
     const probe = book(3, 1024);
     await exportKnowledgePublication(7, probe.doc.id, "10", probe.deps as any);
     const prefix = Array.from(probe.storage.keys()).find(k => k.endsWith("/manifest.json"))!.replace(/\/manifest\.json$/, "");
-    expect(prefix.endsWith("-orig1")).toBe(true);
-    // 同一稿件（同 id、同内容）在另一份存储里预置旧 url2 成品。
+    expect(prefix.endsWith("-full-q95")).toBe(true);
     const f = { ...probe, storage: new Map<string, Buffer>() };
-    const old = prefix.replace(/-orig1$/, "-url2");
     const oldManifest = Buffer.from(JSON.stringify({ htmlBytes: 1, pdfBytes: 10, chapters: 3, imagePages: 3, totalPages: 6 }));
-    f.storage.set(`${old}/manifest.json`, oldManifest);
+    for (const tag of ["url2", "orig1"]) f.storage.set(`${prefix.replace(/-full-q95$/, `-${tag}`)}/manifest.json`, oldManifest);
     f.deps.read.mockImplementation(async (name: string) => f.storage.get(name) || null);
     f.deps.save.mockImplementation(async (name: string, b: Buffer) => { f.storage.set(name, b); });
     f.deps.file.mockImplementation(async (name: string, path: string) => { const d = await readFile(path); f.storage.set(name, d); return d.length; });
     f.deps.pdf.mockClear();
     const fresh = await exportKnowledgePublication(7, f.doc.id, "10", f.deps as any);
     expect(f.deps.pdf).toHaveBeenCalledTimes(3);
-    expect(fresh.pdfUrl).toContain("-orig1/");
-    expect(f.storage.get(`${old}/manifest.json`)).toBe(oldManifest);
-    await exportKnowledgePublication(7, f.doc.id, "10", f.deps as any);
+    expect(fresh.pdfUrl).toContain("-full-q95/");
+    for (const tag of ["url2", "orig1"]) expect(f.storage.get(`${prefix.replace(/-full-q95$/, `-${tag}`)}/manifest.json`)).toBe(oldManifest);
+    const again = await exportKnowledgePublication(7, f.doc.id, "10", f.deps as any);
     expect(f.deps.pdf).toHaveBeenCalledTimes(3);
+    expect(again).toMatchObject({ imageQuality: 95, imageBytes: 3 * 4 * 1024 * 1024 });
+    // 换目录不换结算键：扣费层按稿件结算键幂等（替身只记调用），各次导出用的是同一个键。
+    const keys = new Set((f.deduct.mock.calls as unknown as unknown[][]).map(c => JSON.stringify(c[4])));
+    expect(keys.size).toBe(1); expect(Array.from(keys)[0]).toContain("knowledge-interior/7/");
   });
 
   it("预览/测量 HTML（不传原图开关）与原先逐字相同：仍带 2048 标记，无原图标记", () => {
@@ -178,22 +185,29 @@ describe("只要图片的 PDF 与课件：原图原字节入版", () => {
     const s = sharp(raw, { raw: { width: w, height: h, channels: 3 } });
     return format === "png" ? s.png().toBuffer() : s.jpeg({ quality: 95 }).toBuffer();
   };
-  it("3840×2160 PNG/JPEG 与 3:2 小图：原字节入版、不经重编码；PDF 内嵌像素尺寸 = 原图", async () => {
+  it("只要图片的 PDF：PNG 编成原像素 JPEG 95（4:4:4），JPEG 原图原字节；PDF 内嵌像素尺寸 = 原图", async () => {
     const png = await noisy(3840, 2160, "png"), jpeg = await noisy(3840, 2160, "jpeg"), narrow = await noisy(1536, 1024, "png");
-    for (const input of [png, jpeg, narrow]) expect((await prepareKnowledgeCardPage(input)).image).toBe(input);
+    expect((await prepareKnowledgeCardPage(jpeg)).image).toBe(jpeg);
+    for (const input of [png, narrow]) {
+      const { image } = await prepareKnowledgeCardPage(input);
+      const meta = await sharp(image).metadata(), src = await sharp(input).metadata();
+      expect([meta.format, meta.width, meta.height, meta.chromaSubsampling]).toEqual(["jpeg", src.width, src.height, "4:4:4"]);
+    }
+    const q95 = (await prepareKnowledgeCardPage(png)).image, q80 = (await prepareKnowledgeCardPage(png, 80)).image;
+    expect(q80.length).toBeLessThan(q95.length);
     expect((await prepareKnowledgeCardPage(narrow)).background).not.toBeNull();
     const { filePath, dir } = await buildKnowledgeCardPdfFile([async () => png, async () => jpeg, async () => narrow]);
     try {
       const pdf = await readFile(filePath);
       const text = pdf.toString("latin1");
       expect(pdf.indexOf(jpeg)).toBeGreaterThan(0); // JPEG 原字节整段在 PDF 里
-      expect(text.match(/\/DCTDecode/g)).toHaveLength(1); // 只有那张原 JPEG；PNG 未被转成有损 JPEG
+      expect(pdf.indexOf(q95)).toBeGreaterThan(0); // PNG 页 = 原像素 q95 JPEG
       expect(text).toMatch(/\/Width 3840[\s\S]{0,200}\/Height 2160|\/Height 2160[\s\S]{0,200}\/Width 3840/);
       expect(text).toMatch(/\/Width 1536[\s\S]{0,200}\/Height 1024|\/Height 1024[\s\S]{0,200}\/Width 1536/);
     } finally { await (await import("node:fs/promises")).rm(dir, { recursive: true, force: true }); }
   }, 60_000);
 
-  it("课件图片页：媒体文件就是原图字节（不再缩到 1800 宽、不 JPEG 重编码）", async () => {
+  it("课件图片页：PNG 原图编成原像素 JPEG（质量参数生效），不再缩到 1800 宽", async () => {
     const png = await noisy(3840, 2160, "png");
     const f = makePresentation();
     f.doc.pages[0]!.imageUrl = "gs://test/image.png";
@@ -201,8 +215,12 @@ describe("只要图片的 PDF 与课件：原图原字节入版", () => {
     const r = await buildKnowledgePublicationPptx(f.doc, f.review, { "gs://test/image.png": `data:image/png;base64,${png.toString("base64")}` }, f.plan);
     const zip = await JSZip.loadAsync(r.buffer);
     const media = await Promise.all(Object.keys(zip.files).filter(n => n.startsWith("ppt/media/") && !zip.files[n]!.dir).map(n => zip.file(n)!.async("nodebuffer")));
-    expect(media.some(m => m.equals(png))).toBe(true);
     const meta = await Promise.all(media.map(m => sharp(m).metadata().catch(() => null)));
-    expect(meta.some(m => m?.width === 3840 && m?.height === 2160)).toBe(true);
+    const picture = media[meta.findIndex(m => m?.width === 3840 && m?.height === 2160)]!;
+    expect(picture).toBeTruthy();
+    expect((await sharp(picture).metadata()).format).toBe("jpeg");
+    expect(picture.equals(await sharp(png).rotate().jpeg({ quality: 95, mozjpeg: true, chromaSubsampling: "4:4:4" }).toBuffer())).toBe(true);
+    const low = await buildKnowledgePublicationPptx(f.doc, f.review, { "gs://test/image.png": `data:image/png;base64,${png.toString("base64")}` }, f.plan, { imageQuality: 80 });
+    expect(low.buffer.length).toBeLessThan(r.buffer.length);
   }, 60_000);
 });

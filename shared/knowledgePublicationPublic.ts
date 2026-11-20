@@ -17,6 +17,8 @@ export function knowledgePublicationFailureMessage(error: unknown): string | nul
 export function knowledgePublicationPublicError(error: unknown): { message: string; retryable: boolean } {
   const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   if(raw==="当前服务尚未应用顾问不另收费规则，请刷新后恢复原任务"||raw==="请先确认内文按实际页数计费，未扣费"||raw==="实际内文页数无法核对，未扣费")return {message:raw,retryable:false};
+  // 1121 高清配图生成失败：原句已是业务说明（不含地址与内部名），原样给用户。
+  if(raw.startsWith("成品高清配图生成失败"))return {message:raw,retryable:true};
   const retryMessages=[
     "原提纲仍在处理中或状态未确认，请使用规划按钮恢复原任务，暂不能重新付费。",
     "原提纲的积分退款尚未核对完成，请稍后再试，未创建新任务。",

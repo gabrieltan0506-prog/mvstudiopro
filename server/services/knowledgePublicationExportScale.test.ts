@@ -43,6 +43,8 @@ function book(chapters: number) {
     review: vi.fn(async () => ({ report: pub.review, sourceImages: live.pages.filter(p => p.imageUrl).map(p => ({ uri: p.imageUrl, sha256: SHA })) })),
     image: vi.fn(async () => ({ buffer: Buffer.alloc(IMAGE_BYTES), mimeType: "image/jpeg", width: 2048, height: 1536, sha256: SHA })),
     imageUrl: async (uri: string) => `https://test.invalid/signed/${encodeURIComponent(uri)}`,
+    // 成品派生件替身：编排规模测试不测容量（容量另见 knowledgeExportCapacity 测试），给小体积。
+    exportImage: vi.fn(async (uri: string, quality: number) => ({ uri: `${uri}.q${quality}.jpg`, bytes: 64 * 1024, width: 3840, height: 2160, quality })),
     read: vi.fn(async (name: string) => storage.get(name) || null),
     save: vi.fn(async (name: string, buffer: Buffer) => { storage.set(name, buffer); }),
     file: vi.fn(async (name: string, path: string) => { const data = await readFile(path); storage.set(name, data); return data.length; }),
