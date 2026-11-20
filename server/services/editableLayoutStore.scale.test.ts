@@ -8,7 +8,7 @@ import { performance } from "node:perf_hooks";
 import { layoutFromSource, layoutLibrarySchema, type LayoutLibrary } from "../../shared/editableLayout";
 import { knowledgeReviewBatches } from "../../shared/knowledgePublication";
 import { knowledgeSourceDigest } from "./knowledgePublicationAdvisor";
-import { LayoutConflict, layoutExternalTextCache, layoutLibraryBufferCache, readCanonicalLayoutLibrary, readLayoutLibrary, writeLayoutLibrary } from "./editableLayoutStore";
+import { LayoutConflict, layoutExternalTextCache, layoutLibraryBufferCache, layoutParsedLibraryCache, readCanonicalLayoutLibrary, readLayoutLibrary, writeLayoutLibrary } from "./editableLayoutStore";
 import { EXTERNAL_TEXT_MIN_CHARS } from "./editableLayoutExternalText";
 
 const OWNER = 7;
@@ -60,7 +60,7 @@ function storage() {
 }
 const indexName = `editable-layouts/user-${OWNER}/library.json`;
 const envelopeOf = (deps: ReturnType<typeof storage>) => JSON.parse(deps.map.get(indexName)!.buffer.toString("utf8"));
-const reset = () => { layoutExternalTextCache.clear(); layoutLibraryBufferCache.clear?.(); };
+const reset = () => { layoutExternalTextCache.clear(); layoutLibraryBufferCache.clear(); layoutParsedLibraryCache.clear(); };
 
 beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-11-21T03:00:00.000Z")); reset(); });
 afterEach(() => { vi.useRealTimers(); reset(); });

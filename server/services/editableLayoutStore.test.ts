@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { layoutFromSource } from "../../shared/editableLayout";
-import { layoutLibraryBufferCache, readLayoutLibrary, writeLayoutLibrary } from "./editableLayoutStore";
+import { layoutLibraryBufferCache, layoutParsedLibraryCache, readLayoutLibrary, writeLayoutLibrary } from "./editableLayoutStore";
 vi.mock("./postProdMediaSource", () => ({
   loadSucceededJobOutputSources: vi.fn(async () => ({
     objects: new Set(["own.png"]),
@@ -216,7 +216,7 @@ describe("云稿整库按 generation 进程内缓存（1111 衔接提速）", ()
       return { generation: value.generation };
     });
     const cached = { ...deps, stat };
-    layoutLibraryBufferCache.clear();
+    layoutLibraryBufferCache.clear(); layoutParsedLibraryCache.clear();
     await writeLayoutLibrary(7, library, "0", cached);
     deps.read.mockClear();
     // 刚写入的版本：读取不下载。
@@ -235,7 +235,7 @@ describe("云稿整库按 generation 进程内缓存（1111 衔接提速）", ()
   it("读取方就地修改结果不污染缓存", async () => {
     const { deps, map } = storage();
     const stat = vi.fn(async () => ({ generation: map.get("editable-layouts/user-7/library.json")!.generation }));
-    layoutLibraryBufferCache.clear();
+    layoutLibraryBufferCache.clear(); layoutParsedLibraryCache.clear();
     await writeLayoutLibrary(7, library, "0", { ...deps, stat });
     const first = await readLayoutLibrary(7, { ...deps, stat });
     first.library!.documents[0].title = "被改";
