@@ -33,3 +33,21 @@ export async function loadKnowledgePreviewWithRetry<T>(fetch: () => Promise<T>, 
     }
   }
 }
+
+/**
+ * 排版四步在「排版成册」总进度里的占比（经验估计，站长 2026-11-21 要求排版进入进度条）：
+ * 逐章整理最重（每页一次整理）60，统稿 15，整册排版 10，版面审查与 PDF 15。
+ */
+export const KNOWLEDGE_PUBLICATION_STAGE_WEIGHTS = [60, 15, 10, 15] as const;
+/** 由前台阶段得到排版总进度：步内按 done/total 线性，没有计数的步按该步起点计；全部完成为 100。 */
+export function knowledgeStageProgress(stage: KnowledgePublicationStage | null): { percent: number; stepNumber: number; stepTotal: number; stepName: string; stepDone?: number; stepCount?: number; finished: boolean } | null {
+  if (!stage) return null;
+  const stepTotal = KNOWLEDGE_PUBLICATION_STAGES.length;
+  if (stage.step >= stepTotal) return { percent: 100, stepNumber: stepTotal, stepTotal, stepName: KNOWLEDGE_PUBLICATION_STAGES[stepTotal - 1]!, finished: true };
+  const step = Math.max(0, Math.floor(stage.step));
+  const before = KNOWLEDGE_PUBLICATION_STAGE_WEIGHTS.slice(0, step).reduce((sum: number, weight) => sum + weight, 0);
+  const counted = Number.isFinite(stage.total) && Number(stage.total) > 0;
+  const fraction = counted ? Math.max(0, Math.min(1, Number(stage.done ?? 0) / Number(stage.total))) : 0;
+  const percent = Math.min(99, Math.round(before + KNOWLEDGE_PUBLICATION_STAGE_WEIGHTS[step]! * fraction));
+  return { percent, stepNumber: step + 1, stepTotal, stepName: KNOWLEDGE_PUBLICATION_STAGES[step]!, ...(counted ? { stepDone: Number(stage.done ?? 0), stepCount: Number(stage.total) } : {}), finished: false };
+}
