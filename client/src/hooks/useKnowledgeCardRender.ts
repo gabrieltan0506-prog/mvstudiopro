@@ -764,7 +764,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
             ? `已停止出图：${knowledgeIllustrationBatchSummaryZh(stoppedBatch)}`
             : `已停止出图：完成 ${madePages}/${total} 页，按已出页计费（未出的页不扣）`);
         } else {
-          setCustomNoteProgress({ status: "succeeded", percent: 100, successLabel: "配图完成", label: cardsOnly ? "卡片已全部生成，可导出纯图 PDF" : "正在自动整理正文与版面" });
+          setCustomNoteProgress({ status: "succeeded", percent: 100, successLabel: "配图完成", label: cardsOnly ? "卡片已全部生成，可导出纯图 PDF" : "图片已全部完成，等待选择是否排版成册" });
           toast.success(`已生成 ${total} 页手册配图（${qLabel} · 约 ${credits} 积分）`);
         }
         setCustomNoteDistillPhase("idle");

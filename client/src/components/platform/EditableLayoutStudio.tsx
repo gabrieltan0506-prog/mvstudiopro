@@ -58,11 +58,12 @@ export type EditableLayoutStudioHandle = {
   attachImage: (originalJobId: string, replacementJobId: string, resume: boolean) => Promise<void>;
 };
 /** 按账号恢复，条件写入防止旧会话覆盖新稿。 */
-const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: string; source: LayoutSource | null; readingView?:ReactNode; compact?: boolean; onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void }>(function EditableLayoutStudio({
+const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: string; source: LayoutSource | null; readingView?:ReactNode; compact?: boolean; onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void; layoutDecision?: (doc: EditableLayout) => Promise<import("@/lib/knowledgeLayoutAskGate").KnowledgeLayoutChoice> | undefined }>(function EditableLayoutStudio({
   owner,
   source,
   readingView,
   onPagination,
+  layoutDecision,
   onSupplement,
   compact = false,
 }: {
@@ -70,7 +71,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
   source: LayoutSource | null;
   readingView?:ReactNode;
   compact?: boolean;
-  onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void;
+  onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void; layoutDecision?: (doc: EditableLayout) => Promise<import("@/lib/knowledgeLayoutAskGate").KnowledgeLayoutChoice> | undefined;
 }, ref) {
   // 本机缓存（1111 瘦身）：云端为准，本机只完整保存当前打开的稿与未同步的稿，其他稿只留索引；旧 v1 完整库确认云端已有同版或更新版后才删除。
   const legacyKey = legacyLayoutCacheKey(owner);
@@ -721,7 +722,8 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
                 waitForReading={synchronizedRun?.documentId === doc.id ? synchronizedRun.waitForReading : undefined}
                 autoPreparePresentation={synchronizedRun?.documentId === doc.id && synchronizedRun.preparePresentation}
                 preauthorizedPresentationCredits={synchronizedRun?.documentId === doc.id ? synchronizedRun.presentationCredits : undefined}
-                waitForImages={synchronizedRun?.documentId === doc.id ? synchronizedRun.waitForImages : undefined}/>:<>
+                waitForImages={synchronizedRun?.documentId === doc.id ? synchronizedRun.waitForImages : undefined}
+                waitForLayoutDecision={layoutDecision ? () => layoutDecision(doc) ?? Promise.resolve("layout") : undefined}/>:<>
               <div className="grid gap-5 lg:grid-cols-2">
                 <div className="space-y-3">
                   <label className="block text-sm">
