@@ -288,9 +288,9 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
   }));
   const editions={full:fullTitled!.markdown,concise:conciseTitled!.markdown};
   // 正式分页检查点：两档原稿先保存，再逐个实际图片页及文字章节保存。
-  // 这里的图片页是实际出图分页；文字物理页仍由正式Booklet/PDF渲染器测量。
+  // 这里的图片页是实际出图分页；文字页数在导出排版时才有实测值，准备阶段不再测量。
   const verification=verifiedEdition;
-  const issues=[...(verification?.issues||[]),...selectionIssues];
+  const issues:{kind:string;message:string;level?:string;pageIndex?:number}[]=[...(verification?.issues||[]),...selectionIssues];
   const editionPageCounts:Record<string,{imagePages:number|null;readingPages:number|null;pageBudget?:ReturnType<typeof knowledgeEditionBudgetCheck>}>={};
   // 两档互不依赖：存稿、章节回执、分页回执并行处理（每档各自的写入闸门，失败置停共用）。
   // 文字物理页不再在准备阶段用无头浏览器实排：readingPages 全仓无读者（导出计费另行实测），

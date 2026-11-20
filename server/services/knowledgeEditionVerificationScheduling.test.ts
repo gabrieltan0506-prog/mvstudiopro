@@ -71,15 +71,15 @@ it('D：一章检查点写入瞬态失败放回队尾，稍后成功，整单不
   const bodies=book(),f=store(),buy:any[]=[];
   let failed=0;
   const save=f.evidence.save;
-  // 第 0 章检索回包已落盘后，report.json 写入失败（存取层四次原位重试后仍失败）。
-  f.evidence.save=async(k:string,v:any)=>{if(k==='t/search-0/report.json'&&failed<5){failed++;throw new TypeError('fetch failed');}return save(k,v);};
+  // 第 0 章检索回包已落盘后，report.json 写入失败：存取层原位重试 7 次（共 8 次）仍失败 → 放回队尾；第二轮再失败 1 次后成功。
+  f.evidence.save=async(k:string,v:any)=>{if(k==='t/search-0/report.json'&&failed<9){failed++;throw new TypeError('fetch failed');}return save(k,v);};
   const requests=new Map<string,string>();
   const invoke=cachedInvoke(f.data,buy);
   const wrapped=vi.fn(async(req:any,scope:any)=>{const k=`${scope.prefix}/request.json`;const s=JSON.stringify(f.data.get(k));if(requests.has(k))expect(s).toBe(requests.get(k));else requests.set(k,s);return invoke(req,scope);});
   const run=verifyKnowledgeEditionManuscriptsDetailed(bodies,f.evidence as any,wrapped as any,undefined,{checkpointRequeueMs:[1000,2000,3000]});
   await vi.runAllTimersAsync();
   const out=await run;
-  expect(failed).toBe(5);
+  expect(failed).toBe(9);
   expect(out.bodies[0]).toContain('已核实0');expect(out.issues).toEqual([]);
   expect(buy).toHaveLength(60); // 与无故障时相同：重试走回执复用，不重买
   expect(wrapped.mock.calls.length).toBeGreaterThan(60);
@@ -114,11 +114,11 @@ it('A：通道A慢、B快，B 在 A 满载时接走 A 名下未开始的章节�
   // 不互借：evolink 名下 20 章、4 路、每章两次 10s → 5 轮 × 20s = 100s。
   expect(elapsed).toBeLessThan(50000);
   // 偶数序号原属 evolink；被 openrouter 接走的章节新建请求标 openrouter。
-  const stolen=buy.filter(p=>p.prefix.includes('search-')&&Number(p.prefix.match(/(\d+)$/)[1])%2===0&&p.channel==='openrouter');
+  const stolen=buy.filter(p=>p.prefix.includes('search-')&&Number(p.prefix.match(/(\d+)$/)![1])%2===0&&p.channel==='openrouter');
   expect(stolen.length).toBeGreaterThan(0);
-  for(const p of stolen){const i=p.prefix.match(/(\d+)$/)[1];expect(f.data.get(`t/search-${i}/request.json`).request.executionChannel).toBe('openrouter');}
+  for(const p of stolen){const i=p.prefix.match(/(\d+)$/)![1];expect(f.data.get(`t/search-${i}/request.json`).request.executionChannel).toBe('openrouter');}
   // 同章检索与修订用同一领取通道。
-  for(const p of buy.filter(p=>p.prefix.includes('revision-')))expect(p.channel).toBe(buy.find(q=>q.prefix===`t/search-${p.prefix.match(/(\d+)$/)[1]}`)!.channel);
+  for(const p of buy.filter(p=>p.prefix.includes('revision-')))expect(p.channel).toBe(buy.find(q=>q.prefix===`t/search-${p.prefix.match(/(\d+)$/)![1]}`)!.channel);
  }finally{vi.useRealTimers();}
 });
 

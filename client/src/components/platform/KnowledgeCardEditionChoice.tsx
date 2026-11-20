@@ -7,7 +7,7 @@ import type { KnowledgeCardDetailLevel } from "@shared/knowledgeCardDistillSecti
 export function knowledgeEditionChoiceCountLabel(count: KnowledgeEditionChoiceCount): string {
   if (count.pending === "selecting") return "正在选择重点…";
   if (count.pending === "awaiting_edition") return "两档整理完成后给出张数";
-  return `${count.pageCount} 张图片`;
+  return "pageCount" in count ? `${count.pageCount} 张图片` : "两档整理完成后给出张数";
 }
 
 /**

@@ -81,7 +81,7 @@ describe("B 进度写入库内合并", () => {
       [{ imageGenFlowLog: ["旧"] }, { imageGenFlowLog: [] }],
       [{ distillStageAt: { jobCreated: "t0" } }, { distillStageAt: { jobCreated: "t0", runnerStarted: "t1" }, n: null, z: 0, s: "" }],
     ];
-    for (const [i, [prev, patch]] of cases.entries()) {
+    for (const [i, [prev, patch]] of Array.from(cases.entries())) {
       const id = `b-eq-${i}`;
       await insert(id, "running", { action: "x" }, prev);
       await patchJobRunningProgress(id, patch);
