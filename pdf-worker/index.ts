@@ -526,6 +526,9 @@ app.post("/generate-pdf", async (req, res) => {
     const pdfBuffer = rawPdfBuffer;
 
     res.setHeader("Content-Type", "application/pdf");
+    // 成品原图握手：请求里带原图标记、且本服务按原图入版（不缩放、不重编码）时回报此头。
+    // 服务端据此确认排版服务已是支持原图的版本；旧版本没有这个头，服务端拒收，不把被压缩的图当成品。
+    if (html.includes('data-pdf-original="1"')) res.setHeader("X-Pdf-Original-Images", "1");
     // 2026-11-21：不再声明 Content-Length，改为分块（chunked）回传。Cloud Run 对未分块/非流式的 HTTP/1 应答有 32 MiB 上限，
     // 知识手册成品改用 4K 原图后单段 PDF（一张 3840×2160 原图无损入版，带透明通道时原始像素即约 33MB）可能超过它。
     res.setHeader(

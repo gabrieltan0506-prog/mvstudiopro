@@ -1,3 +1,4 @@
+import { KNOWLEDGE_BOOKLET_ORIGINAL_IMAGE_ATTR } from "../../shared/knowledgeBooklet";
 /**
  * 统一调用 Cloud Run pdf-worker，供同步 tRPC 与异步 jobs 共用。
  */
@@ -45,6 +46,12 @@ async function requestPdfWorker(html: string, token: string | undefined, measure
       const result = await res.json() as { pages?: number; booklets?: KnowledgeBookletMeasure["booklets"] };
       if (!Number.isSafeInteger(result.pages) || result.pages! < 1) throw new Error("知识书册预分页未返回有效页数");
       return { pages: result.pages!, booklets: Array.isArray(result.booklets) ? result.booklets : [] };
+    }
+    // 成品原图握手（2026-11-21，站长：成品图不得压缩）：请求带原图标记时，排版服务必须回报已按原图入版。
+    // 排版服务与服务端分开部署；旧版排版服务不认识原图标记，会把图压到 1200 宽、JPEG 0.75——宁可本次导出失败重试，也不收下降质成品。
+    if (html.includes(KNOWLEDGE_BOOKLET_ORIGINAL_IMAGE_ATTR) && res.headers.get("x-pdf-original-images") !== "1") {
+      await res.arrayBuffer().catch(() => undefined);
+      throw new Error("排版服务尚未更新到原图入版的版本，本次未生成成品（不接受压缩过的配图），请稍后重试");
     }
     return Buffer.from(await res.arrayBuffer());
   } finally {
