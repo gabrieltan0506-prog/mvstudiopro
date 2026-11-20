@@ -7,7 +7,7 @@ import {hasKnowledgeBody} from '../../shared/knowledgeEditionIssues';
 import {knowledgeEditionParts} from '../../shared/knowledgeCardEdition';
 import {knowledgeEditionImageChars,knowledgeEditionImagePlan,planKnowledgeCardPages} from '../../shared/knowledgeCardPagination';
 import {KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST} from './knowledgeModelCapabilities';
-import {verifyKnowledgeEditionManuscripts} from './knowledgeEditionFinalVerification';
+import {verifyKnowledgeEditionManuscriptsDetailed} from './knowledgeEditionFinalVerification';
 import {nameKnowledgeEditionTopics} from './knowledgeTopicTitles';
 
 import {deriveKnowledgeCardCompact} from './knowledgeCardLevelDerive';
@@ -215,7 +215,9 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
     else finalPages[matched] += `\n\n<!-- 待核：${note} -->`;
     existingNotes.add(note);
   }
-  const verified=await verifyKnowledgeEditionManuscripts(finalPages,{...evidence,prefix:`${evidence.prefix}/final-verification`},finalInvoke,params.onProgress);
+  // 核实直接返回问题/待验证/完成标记，不再把数十 MB 的 verified.json 整个读回。
+  const verifiedEdition=await verifyKnowledgeEditionManuscriptsDetailed(finalPages,{...evidence,prefix:`${evidence.prefix}/final-verification`},finalInvoke,params.onProgress);
+  const verified=verifiedEdition.bodies;
   await reportStep("合并已核实章节");
   const verifiedModules=verified.flatMap((body,index)=>knowledgeModulesFromMarkdown(body).modules.map(module=>({...module,priority:modules[index]?.priority||'secondary'})));
   const compiled=compileKnowledgeEditions(original.title,verifiedModules);
@@ -226,7 +228,7 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
   const editions={full:fullTitled!.markdown,concise:conciseTitled!.markdown};
   // 正式分页检查点：两档原稿先保存，再逐个实际图片页及文字章节保存。
   // 这里的图片页是实际出图分页；文字物理页仍由正式Booklet/PDF渲染器测量。
-  const verification=await evidence.read(`${evidence.prefix}/final-verification/verified.json`);
+  const verification=verifiedEdition;
   const issues=[...(verification?.issues||[]),...selectionIssues];
   const editionPageCounts:Record<string,{imagePages:number|null;readingPages:number|null;pageBudget?:ReturnType<typeof knowledgeEditionBudgetCheck>}>={};
   for(const [level,markdown] of [['full',editions.full],['concise',editions.concise]] as const){

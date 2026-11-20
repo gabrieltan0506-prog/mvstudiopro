@@ -54,7 +54,9 @@ it('空标题不删除，末段补齐且逐页先保存；一页搜索失败不�
 it('局部回执未知不新购，保留原页且继续保存其他页',async()=>{
  const f=setup(),invoke=vi.fn();const source=['# 甲\n\n## 次要重点｜空章\n<!-- 待核：失败 -->\n<!-- 回执待确认：未闭合 -->','正常正文。'];
  expect(await verifyKnowledgeEditionManuscripts(source,f.evidence,invoke as any)).toEqual(source);
- expect(invoke).not.toHaveBeenCalled();expect(f.data.get('test/pages/1.json').body).toBe(source[1]);
+ expect(invoke).not.toHaveBeenCalled();
+ // 无需核实的章节由原文确定性得出，不再逐章落盘（分工 L2-B）。
+ expect(f.data.has('test/pages/1.json')).toBe(false);expect(f.data.get('test/pages/0.json').status).toBe('saved');
  expect(f.data.get('test/verified.json').issues[0].kind).toBe('unknown_receipt');
 });
 
