@@ -24,6 +24,8 @@ import {
   knownExternalTexts,
   type ExternalTextRef,
 } from "./editableLayoutExternalText";
+import { applyLayoutSaveDelta, cloneLayoutTree, layoutSourceRetainText, type LayoutSaveDelta } from "../../shared/editableLayoutDelta";
+import { createHash } from "node:crypto";
 export class LayoutConflict extends Error {
   constructor() {
     super("云端排版稿已变化，未覆盖；请导出本机备份后读取云端稿件");
@@ -99,10 +101,65 @@ async function decodeLibraryEnvelope(owner: number, buffer: Buffer, deps: StoreD
 export const layoutLibraryBufferCache = new KnowledgeTtlCache<{ buffer: Buffer; generation: string }>(8, 5 * 60_000);
 const LIBRARY_CACHE_MAX_BYTES = 16 * 1024 * 1024;
 const libraryCacheKey = (gcsUri: string, generation: string) => `${gcsUri}#${generation}`;
-/** 并发保存可能在metadata与body读取之间替换旧generation；只重读同一稿件，不重放写入。 */
-async function readCurrentLayoutVersion(gcsUri: string, deps: StoreDeps) {
+/**
+ * 整库解析结果缓存（1121 夜）：键 = 对象地址 + generation，按估算字节数 LRU 淘汰。
+ * 为什么：200 章 37.7MB 的库超过原文缓存上限，逐章整理期间每次读库都整库下载 + JSON 解析 + schema 校验，累计约 40 秒 CPU。
+ * 安全做法：缓存里的是私有母本，任何读取方都拿结构拷贝（对象/数组新建、字符串共享——字符串不可变，拷贝成本只与节点数有关），
+ * 就地修改返回值（例如读取时给配图签名）不会改到母本，也不会串到别的读取方。generation 变化即换键。
+ */
+type ParsedLibraryEntry = { library: LayoutLibrary; updatedAt: unknown; externalRefs: ExternalTextRef[]; generation: string; strict: boolean };
+class ParsedLibraryCache {
+  private entries = new Map<string, { value: ParsedLibraryEntry; weight: number }>();
+  private total = 0;
+  constructor(readonly maxWeight: number) {}
+  get(key: string) {
+    const hit = this.entries.get(key);
+    if (!hit) return undefined;
+    this.entries.delete(key);
+    this.entries.set(key, hit);
+    return hit.value;
+  }
+  set(key: string, value: ParsedLibraryEntry, weight: number) {
+    if (weight > this.maxWeight) return;
+    const old = this.entries.get(key);
+    if (old) { this.entries.delete(key); this.total -= old.weight; }
+    this.entries.set(key, { value, weight });
+    this.total += weight;
+    while (this.total > this.maxWeight) {
+      const [oldest, entry] = this.entries.entries().next().value as [string, { weight: number }];
+      this.entries.delete(oldest);
+      this.total -= entry.weight;
+    }
+  }
+  get size() { return this.entries.size; }
+  get weight() { return this.total; }
+  clear() { this.entries.clear(); this.total = 0; }
+}
+/** 上限约 256MB（估算：原文字节 ×2 + 外置原文字数 ×2，近似 V8 对象与 UTF-16 字符串占用）。 */
+export const layoutParsedLibraryCache = new ParsedLibraryCache(256 * 1024 * 1024);
+const parsedWeight = (bufferBytes: number, refs: ExternalTextRef[]) => bufferBytes * 2 + refs.reduce((sum, ref) => sum + ref.chars * 2, 0);
+/**
+ * 读当前云稿并解析（v1/v2 都适用）。返回的是缓存母本——调用方必须先 cloneLayoutTree 再交出去，不得就地修改。
+ * strict=false 只用于写前核对旧版（沿用原有宽松读法）；宽松解析的结果不供严格读取复用。
+ */
+async function readParsedLibrary(owner: number, deps: StoreDeps, strict: boolean, known?: () => Map<string, string>): Promise<ParsedLibraryEntry> {
+  const gcsUri = `gs://${getGcsBucketName()}/${objectName(owner)}`;
+  let generation: string | undefined;
   if (deps.stat) {
-    const { generation } = await deps.stat({ gcsUri });
+    generation = (await deps.stat({ gcsUri })).generation;
+    const hit = layoutParsedLibraryCache.get(libraryCacheKey(gcsUri, generation));
+    if (hit && (hit.strict || !strict)) return hit;
+  }
+  const value = await readCurrentLayoutVersion(gcsUri, deps, generation);
+  const decoded = await decodeLibraryEnvelope(owner, value.buffer, deps, strict, known);
+  const entry: ParsedLibraryEntry = { library: decoded.library, updatedAt: decoded.envelope.updatedAt, externalRefs: decoded.externalRefs, generation: value.generation, strict };
+  if (deps.stat) layoutParsedLibraryCache.set(libraryCacheKey(gcsUri, value.generation), entry, parsedWeight(value.buffer.length, decoded.externalRefs));
+  return entry;
+}
+/** 并发保存可能在metadata与body读取之间替换旧generation；只重读同一稿件，不重放写入。 */
+async function readCurrentLayoutVersion(gcsUri: string, deps: StoreDeps, knownGeneration?: string) {
+  if (deps.stat) {
+    const generation = knownGeneration ?? (await deps.stat({ gcsUri })).generation;
     const key = libraryCacheKey(gcsUri, generation);
     const hit = layoutLibraryBufferCache.peek(key);
     if (hit) return hit;
@@ -174,10 +231,9 @@ export async function readLayoutLibrary(
   deps = real,
   mediaDeps = media
 ) {
-  const name = objectName(owner);
   try {
-    const value = await readCurrentLayoutVersion(`gs://${getGcsBucketName()}/${name}`, deps);
-    const { envelope, library } = await decodeLibraryEnvelope(owner, value.buffer, deps, true);
+    const entry = await readParsedLibrary(owner, deps, true);
+    const library = cloneLayoutTree(entry.library);
     if (library.owner !== String(owner)) throw new Error("排版稿账号不匹配");
     // 只有已通过本人产物归属校验的对象才以gs://落盘；读取时按对象重新签名。
     for (const doc of library.documents)
@@ -186,8 +242,8 @@ export async function readLayoutLibrary(
           page.imageUrl = mediaDeps.sign(page.imageUrl);
     return {
       library,
-      generation: value.generation,
-      updatedAt: String(envelope.updatedAt),
+      generation: entry.generation,
+      updatedAt: String(entry.updatedAt),
     };
   } catch (e) {
     if (e instanceof Error && e.message === "gcs_stat_failed:404")
@@ -226,12 +282,12 @@ export async function writeLayoutLibrary(
   /** 旧版索引已引用的外置对象（写旧版前已写成），本次不必重传。 */
   let priorExternal = new Set<string>();
   if (generation !== "0") {
-    const prior = await readCurrentLayoutVersion(`gs://${getGcsBucketName()}/${objectName(owner)}`, deps);
-    if (prior.generation !== generation) throw new LayoutConflict();
     let known: Map<string, string> | undefined;
-    const decoded = await decodeLibraryEnvelope(owner, prior.buffer, deps, false, () => (known ??= knownExternalTexts(externalPlan())));
-    const before = decoded.library;
-    priorExternal = new Set(decoded.externalRefs.map(ref => ref.sha256));
+    const prior = await readParsedLibrary(owner, deps, false, () => (known ??= knownExternalTexts(externalPlan())));
+    if (prior.generation !== generation) throw new LayoutConflict();
+    // 校验函数拿到的是拷贝：即使就地修改也不会污染缓存母本。
+    const before = cloneLayoutTree(prior.library);
+    priorExternal = new Set(prior.externalRefs.map(ref => ref.sha256));
     priorLibrary = before;
     for (const doc of library.documents) {
       const old = before.documents.find(d => d.id === doc.id);
@@ -280,9 +336,10 @@ export async function writeLayoutLibrary(
     await (await import("./knowledgeBookLayout")).validateKnowledgeBookLayoutTransition(owner, priorLibrary, library);
   }
   const updatedAt = new Date().toISOString();
-  let buffer = Buffer.from(
+  const v1Buffer = Buffer.from(
     JSON.stringify({ format: EDITABLE_LAYOUT_V1, owner, updatedAt, library })
   );
+  let buffer = v1Buffer;
   if (buffer.length > inlineMaxBytes(deps)) {
     // 大库：大段图外内文外置为按内容寻址的不可变对象，索引只留引用。先写对象、后写索引。
     const { index, externalText, objects } = externalPlan();
@@ -318,6 +375,11 @@ export async function writeLayoutLibrary(
       ifGenerationMatch: generation,
     });
     if (!result.generation) throw new Error("保存缺少版本回执，请读取云端核对");
+    // 刚写入的库就是该 generation 的解析结果（落盘内容即 library 的序列化）：存一份私有拷贝，入参之后被改也不影响。
+    if (deps.stat)
+      layoutParsedLibraryCache.set(libraryCacheKey(`gs://${getGcsBucketName()}/${objectName(owner)}`, String(result.generation)),
+        { library: cloneLayoutTree(library), updatedAt, externalRefs: buffer === v1Buffer ? [] : externalPlan().externalText.refs, generation: String(result.generation), strict: true },
+        parsedWeight(buffer.length, buffer === v1Buffer ? [] : externalPlan().externalText.refs));
     // 刚写入的整库就是该 generation 的原文：紧随其后的排版输入/预览/导出读取不必再下载。
     if (deps.stat && buffer.length <= LIBRARY_CACHE_MAX_BYTES)
       layoutLibraryBufferCache.set(libraryCacheKey(`gs://${getGcsBucketName()}/${objectName(owner)}`, String(result.generation)), { buffer, generation: String(result.generation) });
@@ -327,4 +389,29 @@ export async function writeLayoutLibrary(
       throw new LayoutConflict();
     throw e;
   }
+}
+
+/** 原稿快照核对摘要（与前台同一算法：去掉配图地址后的 JSON 的 sha256）。 */
+export const layoutSourceRetainDigest = (source: object) => createHash("sha256").update(layoutSourceRetainText(source)).digest("hex");
+/**
+ * 只传变更的保存（editableLayout.saveDocuments）：当前云稿 + 增量 → 完整库，再走与整库保存完全相同的 writeLayoutLibrary。
+ * 基线 generation 不是当前版本 → LayoutConflict；增量与云稿对不上 → LayoutDeltaNeedsFull（前台退回整库保存）。
+ */
+export async function writeLayoutLibraryDelta(owner: number, delta: LayoutSaveDelta, deps = real, mediaDeps = media) {
+  if (!/^\d+$/.test(delta.expectedGeneration)) throw new LayoutConflict();
+  let cloud: LayoutLibrary | null = null;
+  if (delta.expectedGeneration !== "0") {
+    let entry: ParsedLibraryEntry;
+    try { entry = await readParsedLibrary(owner, deps, true); }
+    catch (e) {
+      if (e instanceof Error && e.message === "gcs_stat_failed:404") throw new LayoutConflict();
+      throw e;
+    }
+    if (entry.generation !== delta.expectedGeneration) throw new LayoutConflict();
+    if (entry.library.owner !== String(owner)) throw new Error("排版稿账号不匹配");
+    cloud = entry.library;
+  }
+  // applyLayoutSaveDelta 只读云稿母本，取用部分都做了结构拷贝。
+  const library = applyLayoutSaveDelta(cloud, String(owner), delta, layoutSourceRetainDigest);
+  return writeLayoutLibrary(owner, library as unknown as LayoutLibrary, delta.expectedGeneration, deps, mediaDeps);
 }

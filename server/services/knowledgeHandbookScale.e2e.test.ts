@@ -48,7 +48,7 @@ import { KNOWLEDGE_CONVERSATION_ANSWER_MAX_CHARS } from "../../shared/knowledgeC
 import { layoutFromSource } from "../../shared/editableLayout";
 import { KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS, knowledgeChapterCapacityIssues } from "../../shared/knowledgePublication";
 import { knowledgeNonWhitespaceLength } from "../../shared/knowledgeEditionBudget";
-import { readCanonicalLayoutLibrary, writeLayoutLibrary, layoutLibraryBufferCache } from "./editableLayoutStore";
+import { readCanonicalLayoutLibrary, writeLayoutLibrary, layoutLibraryBufferCache, layoutParsedLibraryCache } from "./editableLayoutStore";
 import { buildKnowledgeReviewRequest, knowledgePublicationAdvisorDeps, knowledgeSourceDigest, KNOWLEDGE_REVIEW_REQUEST_MAX_TOKENS, KNOWLEDGE_COMPRESSION_CAPACITY_RATIO, reviewKnowledgePublication, validateKnowledgePublicationAccess, knowledgePublicationWorkPlan, knowledgeEvidencePrefix, KNOWLEDGE_VISUAL_ADVISOR_MODEL } from "./knowledgePublicationAdvisor";
 import { reviewKnowledgeConversation } from "./knowledgeConversationAdvisor";
 import { loadKnowledgeBookLayoutInput, loadKnowledgeBookLayoutView, knowledgeBookLayoutCache, knowledgeBookLayoutInput, KNOWLEDGE_BOOK_LAYOUT_REQUEST_MAX_BYTES } from "./knowledgeBookLayout";
@@ -235,7 +235,7 @@ async function rehearse(s: Scale) {
 
 const report = (m: Metrics) => console.log(`[规模演练] ${JSON.stringify({ ...m, requests: undefined, layoutAnswer: undefined, layoutRequestDigests: m.layoutRequestDigests?.length, compressRequestDigests: m.compressRequestDigests ? sha([...m.compressRequestDigests].sort()) : undefined })}`);
 
-beforeEach(() => { bucket.objects.clear(); bucket.jobs.clear(); layoutLibraryBufferCache.clear(); knowledgeBookLayoutCache.clear(); });
+beforeEach(() => { bucket.objects.clear(); bucket.jobs.clear(); layoutLibraryBufferCache.clear(); layoutParsedLibraryCache.clear(); knowledgeBookLayoutCache.clear(); });
 
 describe("手册后半程多规模演练（替身模型 + 内存存储）", () => {
   it("4 章小书（新结构，带图外内文）：全程走通，统稿零调用汇总、不跑全册核对", async () => {
@@ -317,7 +317,7 @@ describe("随规模出问题的边界（先钉住、后修掉）", () => {
     expect(ok.layoutGroups).toBe(50);
     // 未超限：逐字等于各组说明以空行连接
     expect(ok.layoutAnswer).toBe(Array.from({ length: 50 }, () => prose("排版说明", 2600)).join("\n\n"));
-    bucket.objects.clear(); bucket.jobs.clear(); layoutLibraryBufferCache.clear(); knowledgeBookLayoutCache.clear();
+    bucket.objects.clear(); bucket.jobs.clear(); layoutLibraryBufferCache.clear(); layoutParsedLibraryCache.clear(); knowledgeBookLayoutCache.clear();
     const over = await rehearse({ name: "legacy200over", chapters: 200, supplementChars: 0, legacy: true, layoutAnswerChars: 2700 });
     report(over);
     expect(over.stuck).toBeUndefined();
@@ -346,7 +346,7 @@ describe("随规模出问题的边界（先钉住、后修掉）", () => {
     expect(m.stuck).toMatch(/审校第1批：第1章《[^》]+》正文与图外内文过长，超过单次整理容量约[\d,]+字/);
     expect(m.max.review.n).toBe(0);
     // 六章各 10 万字：逐章审校（单章约 30 万字节）能过；统稿后篇幅压缩若固定三章一组约 90 万字节会超容量，改按字节分组后全部压缩完成。
-    bucket.objects.clear(); bucket.jobs.clear(); layoutLibraryBufferCache.clear();
+    bucket.objects.clear(); bucket.jobs.clear(); layoutLibraryBufferCache.clear(); layoutParsedLibraryCache.clear();
     const g = await rehearse({ name: "cap6", chapters: 6, supplementChars: 100_000 });
     report(g);
     expect(g.reached).toBe("view");

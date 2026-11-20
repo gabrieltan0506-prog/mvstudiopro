@@ -5,10 +5,12 @@ import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import { knowledgeTimingLog } from "../services/knowledgePublicationCache";
 import { layoutLibrarySchema } from "../../shared/editableLayout";
+import { LayoutDeltaNeedsFull, layoutSaveDeltaSchema } from "../../shared/editableLayoutDelta";
 import {
   LayoutConflict,
   readLayoutLibrary,
   writeLayoutLibrary,
+  writeLayoutLibraryDelta,
 } from "../services/editableLayoutStore";
 const publicationProcedure = protectedProcedure.use(async ({ next, path }) => {
   const startedAt = Date.now();
@@ -143,4 +145,22 @@ export const editableLayoutRouter = router({
         });
       }
     }),
+  /**
+   * 只传变更的保存（1121 夜）：前台只上传改动的稿（原稿快照未变时只传沿用标记），服务端重建完整库后走与 save 完全相同的校验与写入。
+   * CONFLICT = 基线已过期（与 save 同一语义）；PRECONDITION_FAILED = 增量与云稿对不上，前台改用 save 整库保存。
+   */
+  saveDocuments: protectedProcedure.input(layoutSaveDeltaSchema).mutation(async ({ ctx, input }) => {
+    const startedAt = Date.now();
+    try {
+      const saved = await writeLayoutLibraryDelta(ctx.user.id, input);
+      knowledgeTimingLog("editableLayout.saveDocuments", startedAt, { ok: true, documents: input.order.length, upserts: input.upserts.length });
+      return saved;
+    } catch (e) {
+      knowledgeTimingLog("editableLayout.saveDocuments", startedAt, { ok: false, documents: input.order.length, upserts: input.upserts.length });
+      throw new TRPCError({
+        code: e instanceof LayoutConflict ? "CONFLICT" : e instanceof LayoutDeltaNeedsFull ? "PRECONDITION_FAILED" : "SERVICE_UNAVAILABLE",
+        message: e instanceof Error ? e.message : "排版稿保存失败",
+      });
+    }
+  }),
 });
