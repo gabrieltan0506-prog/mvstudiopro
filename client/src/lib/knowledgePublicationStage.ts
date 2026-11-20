@@ -13,7 +13,7 @@ export function knowledgeStageLabel(stage: KnowledgePublicationStage | null) {
   if (!stage) return "";
   if (stage.step >= KNOWLEDGE_PUBLICATION_STAGES.length) return "全部完成：" + KNOWLEDGE_PUBLICATION_STAGES.join(" → ");
   return KNOWLEDGE_PUBLICATION_STAGES.map((name, i) => {
-    const count = i === stage.step && stage.total ? ` ${stage.done ?? 0}/${stage.total}` : "";
+    const count = i === stage.step && stage.total ? ` ${stage.done ?? 0}/${stage.total}${i === 3 ? " 段" : ""}` : "";
     return i < stage.step ? `${name} ✓` : i === stage.step ? `【${name}${count}】` : name;
   }).join(" → ");
 }
