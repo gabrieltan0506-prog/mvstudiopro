@@ -18,11 +18,14 @@ it('正式两档只选择原章，完整知识不二次浓缩；逐页保存且�
   return {status:200,text:JSON.stringify({candidates:[{content:{parts:[{text:JSON.stringify({pages:[{body:'模型错误改写',reading:{blocks:[0,1,2].map(i=>({title:`原始主题${i}`,type:'prose',text:'只选身份，不采用模型改写内容',note:''}))}}]})}]}}]})};
  });
  const evidence={prefix:'test/edition',read:async(k:string)=>storage.get(k)||null,save:async(k:string,v:any)=>{storage.set(k,v);}};
- const positions:number[]=[];
- const result=await prepareKnowledgeCardEditions({sourceMarkdown,evidence,measure:async()=>2,invoke:invoke as any,targetSections:3,
-   onProgress:p=>{if(p.step && !p.totalBatches)positions.push(editionStepPosition(p.step,false).editionStepNumber || 0);}
+ const steps:string[]=[];const measure=vi.fn(async()=>2);
+ const result=await prepareKnowledgeCardEditions({sourceMarkdown,evidence,measure,invoke:invoke as any,targetSections:3,
+   onProgress:p=>{if(p.step&&steps.at(-1)!==p.step)steps.push(p.step);}
  });
- expect(positions).toEqual([5,6,7,8,9,10,11,12,13]);
+ // 收尾段两档并行：步骤文案同时带两档名；准备阶段不再实排量文字页。
+ expect(steps.slice(steps.indexOf('合并已核实章节'))).toEqual(['合并已核实章节','整理完整版和精华版标题','保存完整版和精华版正文和章节','计算并保存完整版和精华版图文分页','保存两版成稿']);
+ expect(editionStepPosition('合并已核实章节',false).editionStepNumber).toBe(5);
+ expect(measure).not.toHaveBeenCalled();
  const full=knowledgeEditionParts(result.fullEditionMarkdown)!,concise=knowledgeEditionParts(result.markdown)!;
  for(let i=0;i<18;i++)for(const edition of [full,concise]){
   expect(edition.knowledge).toContain(`保留数值${100+i}克`);expect(edition.knowledge).toContain(`| 项${i} | 每天${i+1}次 |`);
@@ -30,7 +33,9 @@ it('正式两档只选择原章，完整知识不二次浓缩；逐页保存且�
  expect(full.knowledge).not.toContain('模型错误改写');
  expect(full.reading).toContain('原书适用条件');expect(concise.reading).toContain('原始主题17');
  expect(concise.images).not.toContain('原始主题17');
- expect(result.editionPageCounts.full.readingPages).toBe(2);
+ expect(result.editionPageCounts.full.readingPages).toBeNull();
+ expect(storage.get('test/edition/pages/full/counts.json')).toMatchObject({readingPages:null,imagePages:result.editionPageCounts.full.imagePages});
+ expect(Array.from(storage.keys()).some(k=>k.endsWith('reading-layout.json'))).toBe(false);
  for(const [level,markdown] of [['full',result.fullEditionMarkdown],['concise',result.markdown]]){
   const plan=planKnowledgeCardPages(markdown);expect(plan.pages.every(p=>p.length<=1200)).toBe(true);
   for(let i=0;i<plan.pages.length;i++)expect(storage.get(`test/edition/pages/${level}/images/${i}.json`).body).toBe(plan.pages[i]);
@@ -106,7 +111,7 @@ it('没有真实文字说明时不得把完整版标记为整理成功',async()=
  evidence:{prefix:'no-reading',read:async k=>storage.get(k)||null,save:async(k,v)=>{storage.set(k,v);}},invoke:vi.fn(),measure:async()=>1});
  expect(result.verificationProcessed).toBe(false);
  expect(result.editionIssues.some((issue:any)=>issue.kind==='missing_reading')).toBe(true);
- expect(result.editionPageCounts.full.readingPages).toBe(0);
+ expect(result.editionPageCounts.full.readingPages).toBeNull();
 });
 
 it('无搜索结果的待验证稿件正式两档放行，状态与可见标记一致',async()=>{
@@ -190,7 +195,8 @@ it('D1 逐页回执并发写入：同键同内容，在途>1且不超上限，�
   evidence:{prefix:'d1',read:async k=>parallel.get(k)??null,save:async(k,v)=>{
    if(pageKey(k)){inflight++;peak=Math.max(peak,inflight);await new Promise(r=>setTimeout(r,2));inflight--;}
    parallel.set(k,structuredClone(v));}}});
- expect(peak).toBeGreaterThan(1);expect(peak).toBeLessThanOrEqual(KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY);
+ // 两档并行、每档各自 ≤ 上限：两档合计在途 ≤ 2×上限。
+ expect(peak).toBeGreaterThan(1);expect(peak).toBeLessThanOrEqual(2*KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY);
  expect(Array.from(parallel.keys()).filter(pageKey).length).toBeGreaterThan(20);
  expect(new Set(parallel.keys())).toEqual(new Set(serial.keys()));
  for(const [k,v] of Array.from(serial))expect(parallel.get(k)).toEqual(v);
@@ -198,23 +204,22 @@ it('D1 逐页回执并发写入：同键同内容，在途>1且不超上限，�
  expect(Object.keys(result.editionPageCounts)).toEqual(['full','concise']);
 });
 
-it('D1 并发池中途一条回执写入失败：整步失败不报部分成功、不写editions.json；重跑零模型调用且与干净运行逐键一致',async()=>{
+it('D1 并发池中途一条回执写入失败：两档同时停止领取、整步失败不写editions.json；重跑零模型调用且与干净运行逐键一致',async()=>{
  const sourceMarkdown=d1Source(),invoke=d1Invoke();
  const clean=new Map<string,any>();
  await prepareKnowledgeCardEditions({sourceMarkdown,targetSections:3,invoke:d1Invoke() as any,measure:async()=>2,
   evidence:{prefix:'d1f',read:async k=>clean.get(k)??null,save:async(k,v)=>{clean.set(k,structuredClone(v));}}});
- expect(Array.from(clean.keys()).filter(k=>/\/pages\/full\/chapters\//.test(k)).length).toBeGreaterThan(KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY_FOR_TEST);
- const storage=new Map<string,any>();let imageWrites=0,failOnce=true;const after:string[]=[];let failed=false;
+ const storage=new Map<string,any>();let chapterWrites=0,failOnce=true;const after:string[]=[];let failed=false;
  const evidence={prefix:'d1f',read:async(k:string)=>storage.get(k)??null,save:async(k:string,v:any)=>{
-  if(/\/pages\/full\/chapters\/\d+\.json$/.test(k)&&++imageWrites===5&&failOnce){failOnce=false;failed=true;await new Promise(r=>setTimeout(r,1));throw Error('ENOSPC: no space left on device');}
+  if(/\/pages\/full\/chapters\/\d+\.json$/.test(k)&&++chapterWrites===5&&failOnce){failOnce=false;failed=true;await new Promise(r=>setTimeout(r,1));throw Error('ENOSPC: no space left on device');}
   if(failed)after.push(k);
   await new Promise(r=>setTimeout(r,1));storage.set(k,structuredClone(v));}};
  const params={sourceMarkdown,targetSections:3,invoke:invoke as any,evidence,measure:async()=>2};
  await expect(prepareKnowledgeCardEditions(params)).rejects.toThrow('章节检查点保存或读取失败，保留任务等待恢复');
  expect(storage.has('d1f/editions.json')).toBe(false);
- // 失败后不再领取新条目（在途的最多再收口 上限-1 条）：图片页、精华档与文字测量阶段都未开始。
- expect(after.length).toBeLessThan(KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY_FOR_TEST);
- expect(after.some(k=>k.includes('/images/')||k.includes('/pages/concise/')||k.endsWith('reading-layout.json'))).toBe(false);
+ // 失败后不再领取新条目：失败抛出前（替身 1ms）在途与刚放行的写入至多两倍上限；分页回执与完成标记都未写。
+ expect(after.length).toBeLessThan(2*KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY_FOR_TEST);
+ expect(after.some(k=>k.includes('/images/')||k.endsWith('.done.json')||k.endsWith('reading-layout.json'))).toBe(false);
  const calls=invoke.mock.calls.length;
  const result=await prepareKnowledgeCardEditions(params);
  expect(invoke).toHaveBeenCalledTimes(calls);expect(result.verificationProcessed).toBe(true);
