@@ -4,6 +4,14 @@ const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   "mvAnalysis.stageKnowledgeCardManuscriptChunk",
   "mvAnalysis.finalizeKnowledgeCardManuscript",
   "mvAnalysis.prepareKnowledgeCardCopy",
+  /**
+   * 1120：手册成稿回填。大书的完整版、精华版与原稿一并返回可达十几 MB，服务端还要先读出整条任务比对；
+   * 走 www 反代会超时或被截断，前台按钮一直灰着、文本框空白。四个入口同走鉴权 Fly。
+   */
+  "mvAnalysis.getKnowledgeCardRecovery",
+  "mvAnalysis.listKnowledgeCardRecovery",
+  "mvAnalysis.getLastKnowledgeVerificationDraft",
+  "mvAnalysis.resumeLastKnowledgeVerification",
   "mvAnalysis.enqueueKnowledgeCardLevelDerive",
   "mvAnalysis.getGrowthSnapshot",
   "mvAnalysis.getPlatformDashboard",
