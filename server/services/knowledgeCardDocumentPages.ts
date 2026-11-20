@@ -140,8 +140,9 @@ export type KnowledgeCardPageSelector = KnowledgeCardPageSelectFn & {
   stream?: (
     pageCount: number,
     totalSheets: number,
-    onProgress?: (doneSheets: number, totalSheets: number) => void | Promise<void>,
-  ) => KnowledgeCardPageSelectionStream;
+    onProgress: (doneSheets: number, totalSheets: number) => void | Promise<void>,
+    identities: Pick<KnowledgeCardContactSheet, "gcsUri" | "pageNumbers">[],
+  ) => KnowledgeCardPageSelectionStream | Promise<KnowledgeCardPageSelectionStream | KnowledgeCardPageSelection[]>;
 };
 
 export function knowledgeCardDocumentKey(buffer: Buffer): string {
@@ -451,7 +452,23 @@ export async function prepareKnowledgeCardDocumentPages(params: {
     // 全部目录页都已存在（续做/旧书）时不必流式：整本一次交给挑页器，旧版整本挑页缓存照常命中
     // 目录图列表暂时不可读时不流式：可能是已扫完的旧书，流式会先把每组重扫（付费）再在末尾被 v1 整本缓存覆盖
     const listUnreadable = Boolean(params.existingSheets) && !existing;
-    const stream = missing.length && !listUnreadable && params.selectPages.stream ? params.selectPages.stream(total, sheetCount, selectProgress) : undefined;
+    let stream: KnowledgeCardPageSelectionStream | undefined;
+    let savedSelection: KnowledgeCardPageSelection[] | undefined;
+    if (missing.length && !listUnreadable && params.selectPages.stream) {
+      // 缩略图对象名和页号由原稿决定，补图之前就能检查整本旧回执。
+      const { getGcsBucketName } = await import("./gcs.js");
+      const bucket = getGcsBucketName();
+      const identities = Array.from({ length: sheetCount }, (_, i) => {
+        const { first, last } = sheetRange(i + 1);
+        return {
+          gcsUri: sheets[i]?.gcsUri ?? `gs://${bucket}/${knowledgeCardSheetObjectName(params.userId, docKey, i + 1)}`,
+          pageNumbers: Array.from({ length: last - first + 1 }, (_, offset) => first + offset),
+        };
+      });
+      const started = await params.selectPages.stream(total, sheetCount, selectProgress, identities);
+      if (Array.isArray(started)) savedSelection = started;
+      else stream = started;
+    }
     if (stream) sheets.forEach((sheet, position) => { if (sheet) stream.add(position, sheet); });
 
     let readyPages = sheets.reduce((n, sheet) => n + (sheet ? sheet.pageNumbers.length : 0), 0);
@@ -540,7 +557,7 @@ export async function prepareKnowledgeCardDocumentPages(params: {
     selectLive = true;
     if (pendingSelect) await report("select", pendingSelect[0], pendingSelect[1]);
     params.abortSignal?.throwIfAborted();
-    const picked = stream ? await stream.finish() : await params.selectPages(sheets, total, selectProgress);
+    const picked = savedSelection ?? (stream ? await stream.finish() : await params.selectPages(sheets, total, selectProgress));
     const selectedMap = new Map<number, string | undefined>();
     params.abortSignal?.throwIfAborted();
     for (const item of picked) {

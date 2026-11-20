@@ -1,5 +1,6 @@
+import { TRPCClientError } from '@trpc/client';
 import { describe, it, expect } from "vitest";
-import { knowledgeIllustrationRun, knowledgeIllustrationJobId, runKnowledgeIllustrationBatch, classifyKnowledgeIllustrationFailure, KnowledgeIllustrationBatchError, inspectKnowledgeIllustrationRetry } from "./knowledgeIllustrationRun";
+import { readKnowledgeIllustrationTerminal, knowledgeIllustrationRun, knowledgeIllustrationJobId, runKnowledgeIllustrationBatch, classifyKnowledgeIllustrationFailure, KnowledgeIllustrationBatchError, inspectKnowledgeIllustrationRetry } from "./knowledgeIllustrationRun";
 import { knowledgeCardPageJobId } from "../../../server/jobs/knowledgeCardPageTask";
 describe("同步图片等待与真实任务身份", () => {
   it("预分配图片ID与服务端实际reserve使用的ID完全相同", async () => {
@@ -210,4 +211,29 @@ describe("出图失败分类", () => {
     expect(classifyKnowledgeIllustrationFailure(Object.assign(new Error("aborted"), { name: "AbortError" }))).toBe("batch_fatal");
     expect(classifyKnowledgeIllustrationFailure(Object.assign(new Error("x"), { kind: "unknown" }))).toBe("unknown");
   });
+});
+
+it("浏览器在出图请求发出后断线，仅在途页等待对账，后续页不派发", async () => {
+  const submitted: number[] = [];
+  const error = await runKnowledgeIllustrationBatch({
+    count: 20, concurrency: 2, active: () => true,
+    execute: async index => {
+      submitted.push(index);
+      throw TRPCClientError.from(new TypeError("Failed to fetch"));
+    },
+  }).catch(error => error);
+  expect(submitted).toEqual([0, 1]);
+  expect(error.summary).toMatchObject({ unknown: 2, failed: 0, notDispatched: 18, stoppedBy: "unknown" });
+  const read = async () => ({ status: "running" });
+  await expect(inspectKnowledgeIllustrationRetry("sent-page-0", false, read)).rejects.toThrow(/仍在执行/);
+});
+
+it("已入队后读取失败保留原任务身份，非 JSON 网关错误也停领", async () => {
+  const broken = TRPCClientError.from(new SyntaxError("Unexpected token '<'"));
+  expect(classifyKnowledgeIllustrationFailure(broken)).toBe("unknown");
+  const pending = await readKnowledgeIllustrationTerminal("original-job", async () => { throw new Error("HTTP 403"); }).catch(error => error);
+  expect(pending).toMatchObject({ kind: "unknown", jobId: "original-job" });
+  expect(classifyKnowledgeIllustrationFailure(pending)).toBe("unknown");
+  const failed = {status:"failed",error:"content policy"};
+  expect(await readKnowledgeIllustrationTerminal("original-job", async () => failed)).toBe(failed);
 });

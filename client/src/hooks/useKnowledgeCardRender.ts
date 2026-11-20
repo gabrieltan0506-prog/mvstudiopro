@@ -11,7 +11,7 @@ import { cachePhotoTemporaryMedia, triggerTemporaryDownload } from "@/lib/photoT
 import { extractInfographicSubjectFromUserCopy } from "@shared/infographicNoteTemplates";
 import { formatOptimizationAdvice } from "@shared/marketingOffer";
 import { getJob, pollJobUntilTerminal } from "@/lib/jobs";
-import { inspectKnowledgeIllustrationRetry, knowledgeIllustrationJobId, knowledgeIllustrationRun, runKnowledgeIllustrationBatch } from "@/lib/knowledgeIllustrationRun";
+import { knowledgeIllustrationReceiptUnknown, readKnowledgeIllustrationTerminal, inspectKnowledgeIllustrationRetry, knowledgeIllustrationJobId, knowledgeIllustrationRun, runKnowledgeIllustrationBatch } from "@/lib/knowledgeIllustrationRun";
 import { knowledgeCardFullManuscript, knowledgeCardInputFingerprint, knowledgeCardInputKey } from "@shared/knowledgeCardSourceIdentity";
 import { knowledgeCardProgressFromRender } from "@/components/platform/KnowledgeCardProgress";
 import { knowledgeCardRecordedModelLabel } from "@shared/knowledgeCardDistillModels";
@@ -343,26 +343,34 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
       const pid = (res as { progressJobId?: string }).progressJobId!;
       // 入队即落库：刷新/换页后开页可自动续轮询，不再丢单（2026-08-12 实证三连丢后加）
       writePosterResumeRecord({ jobId: pid, kind, titleHead: title, firedAt: Date.now() });
+      let receiptResolved = false;
       try {
-        const j = await pollJobUntilTerminal(pid, {
+        const poll = () => pollJobUntilTerminal(pid, {
           intervalMs: 1500,
           // 0910：服务端整链墙钟 25min（官方→WaveSpeed→EvoLink 串行），客户端要等得更久，否则图在出、费已扣、前台却报失败
           maxWaitMs: 28 * 60_000,
           adaptiveBackoffAfterAttempts: 20,
           maxIntervalMs: 5000,
         });
+        const j = kind === "single_page_knowledge_card" ? await readKnowledgeIllustrationTerminal(pid, poll) : await poll();
+        receiptResolved = j.status === "failed";
         if (pageRequestId) knowledgeCardPageTasks.finish(pageRequestId);
         knowledgeCardPageTasks.assertLive();
         if (j.status === "failed") throw new Error(j.error || "生成失敗，請重試");
         const out = j.output as { compositeImageUrl?: string; imageUrl?: string } | null;
         const url = out?.compositeImageUrl || out?.imageUrl || "";
-        if (!url) throw new Error("未取得圖片 URL，請重試");
+        if (!url) {
+          if (kind === "single_page_knowledge_card") throw knowledgeIllustrationReceiptUnknown(pid);
+          throw new Error("未取得圖片 URL，請重試");
+        }
+        receiptResolved = true;
         return url;
       } finally {
         // 只清自己的挂账：无条件清会把并发新任务的记录误删（审查抓的竞态）
-        if (readPosterResumeRecord()?.jobId === pid) writePosterResumeRecord(null);
+        if ((kind !== "single_page_knowledge_card" || receiptResolved) && readPosterResumeRecord()?.jobId === pid) writePosterResumeRecord(null);
       }
     }
+    if (kind === "single_page_knowledge_card") throw knowledgeIllustrationReceiptUnknown(progressJobId);
     throw new Error("生成失敗，請重試");
   };
 

@@ -24,16 +24,33 @@ const UNKNOWN_RE = /尚未确认|无法确认|待核实|结果待核|转人工�
 /** routers.ts holdCompositeForReconcile 之后写在日志尾巴之后的说明（只在结果未知、未退款时出现）。 */
 const RECONCILE_NOTE_RE = /出图结果无法确认，供应商可能已建单/;
 export function classifyKnowledgeIllustrationFailure(error: unknown): KnowledgeIllustrationFailureClass {
-  const e = error as { name?: string; kind?: string; message?: string; code?: string; data?: { code?: string } } | null;
+  const e = error as { name?: string; kind?: string; message?: string; code?: string; shape?: unknown; data?: { code?: string } } | null;
   if (e?.name === "AbortError" || e?.kind === "cancelled") return "batch_fatal";
+  // 浏览器断线、代理返回非 JSON 等情况下 tRPC 没有服务端错误 shape。
+  // 请求可能已经抵达，保留已登记的任务 ID，令批次停领并在恢复时对账。
+  if (e?.name === "TRPCClientError" && !e.shape && !e.data?.code) return "unknown";
+  if (e?.kind === "unknown") return "unknown";
   const code = String(e?.data?.code || e?.code || "");
   if (/^(?:UNAUTHORIZED|FORBIDDEN|PAYMENT_REQUIRED|PRECONDITION_FAILED)$/.test(code)) return "batch_fatal";
   // 服务端失败文案 =「最终错误」+「── log ──」+ 过程日志尾巴；日志里会有已回落成功的另一通道的错误，只按最终错误判。
   const full = String(e?.message ?? error ?? "");
   const message = full.split("── log ──")[0]!.split(/\n执行日志[:：]/)[0]!;
   if (BATCH_FATAL_RE.test(message)) return "batch_fatal";
-  if (e?.kind === "unknown" || UNKNOWN_RE.test(message) || RECONCILE_NOTE_RE.test(full)) return "unknown";
+  if (UNKNOWN_RE.test(message) || RECONCILE_NOTE_RE.test(full)) return "unknown";
   return "page";
+}
+
+/** 入队后查询失败只代表回执缺失；保留原任务身份给恢复入口对账。 */
+export function knowledgeIllustrationReceiptUnknown(jobId: string): Error {
+  return Object.assign(new Error("配图结果待核实，请在原任务中查看"), { kind: "unknown", jobId });
+}
+
+export async function readKnowledgeIllustrationTerminal<T>(jobId: string, poll: () => Promise<T>): Promise<T> {
+  try {
+    return await poll();
+  } catch {
+    throw knowledgeIllustrationReceiptUnknown(jobId);
+  }
 }
 
 export type KnowledgeIllustrationBatchSummary = {

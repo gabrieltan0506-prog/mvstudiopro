@@ -403,6 +403,10 @@ const triageAnswer = (p: { imageUrls?: string[] }) => {
 describe("挑页：按组提前开扫、按组缓存、旧整本缓存只读", () => {
   it("第 1 组 8 张一就绪就开扫：第 2 组目录页还卡在上传时第 1 组已在途", async () => {
     const bucket = fakeBucket();
+    // 第一组已有七张缩略图但从未挑页，只需实际渲染第八张即可观察提前派发。
+    for (let index = 1; index < 8; index++) {
+      bucket.objects.set(knowledgeCardSheetObjectName(USER, DOC, index), Buffer.from("已存缩略图"));
+    }
     let releaseUpload!: () => void;
     const uploadGate = new Promise<void>((r) => { releaseUpload = r; });
     bucket.hooks.gate = (name) => Number(/s-(\d+)\.jpg$/.exec(name)![1]) > 8 ? uploadGate : undefined;
@@ -412,10 +416,11 @@ describe("挑页：按组提前开扫、按组缓存、旧整本缓存只读", (
       if (calls.length === 1) releaseUpload();
       return triageAnswer(p);
     });
-    const set = await prepareKnowledgeCardDocumentPages({
-      buffer: pdf, docKey: DOC, fileName: "s.pdf", userId: USER, selectPages: makeKnowledgeCardPageSelector("glm-5.3-flashx"),
+    const resume = memoryStore();
+    const set = await knowledgeStructuredDistillContext.run({ evidence: memoryStore("e").store, resume: resume.store } as any, () => prepareKnowledgeCardDocumentPages({
+      buffer: pdf, docKey: DOC, fileName: "s.pdf", userId: USER, selectPages: knowledgeCardResumablePageSelector("glm-5.3-flashx"),
       uploadPage: bucket.uploadPage, existingSheets: bucket.existingSheets,
-    });
+    }));
     expect(calls).toHaveLength(2);
     expect(calls[0].uploadedAtCall).toBe(8);
     expect(calls[0].p.imageUrls).toHaveLength(8);
@@ -439,6 +444,10 @@ describe("挑页：按组提前开扫、按组缓存、旧整本缓存只读", (
 
   it("按组缓存：一组失败 → 只落成功组、回报残缺；再跑只重扫失败组；全部成功后零调用", async () => {
     const bucket = fakeBucket();
+    // 这个用例验证选页回执的恢复，不依赖重新渲染所有缩略图。
+    for (let index = 1; index <= SHEETS; index++) {
+      if (index !== 8) bucket.objects.set(knowledgeCardSheetObjectName(USER, DOC, index), Buffer.from("已存缩略图"));
+    }
     const resume = memoryStore();
     const evidence = memoryStore("knowledge-card-distill/user-7/job-a");
     let failGroup2 = true;
@@ -483,10 +492,12 @@ describe("挑页：按组提前开扫、按组缓存、旧整本缓存只读", (
     } finally { warn.mockRestore(); }
   }, 120_000);
 
-  it("v1 整本挑页缓存只读命中：已扫完的旧书零调用、不写 v2，参考页不变", async () => {
-    const sheets = await referenceSheets();
+  it.each([0, 1])("旧书缺 %i 张目录图：补齐缩略图，直接复用 v1，全程零挑页请求", async missing => {
+    vi.stubEnv("GCS_BUCKET_NAME", "test");
     const bucket = fakeBucket();
-    for (const [k, v] of Array.from(sheets)) bucket.objects.set(k, v);
+    for (let index = missing + 1; index <= SHEETS; index++) {
+      bucket.objects.set(knowledgeCardSheetObjectName(USER, DOC, index), Buffer.from("已存缩略图"));
+    }
     const resume = memoryStore();
     const identity = { version: "page-selection-v1", model: "glm-5.3-flashx", pageCount: PAGES, sheets: Array.from({ length: SHEETS }, (_, i) => {
       const first = i * 12 + 1;
@@ -500,13 +511,37 @@ describe("挑页：按组提前开扫、按组缓存、旧整本缓存只读", (
       buffer: pdf, docKey: DOC, fileName: "s.pdf", userId: USER, selectPages: knowledgeCardResumablePageSelector("glm-5.3-flashx"),
       uploadPage: bucket.uploadPage, existingSheets: bucket.existingSheets,
     }));
+    expect(bucket.uploads).toBe(missing);
     expect(hook).not.toHaveBeenCalled();
     expect(set.selectedPages).toEqual([55]);
     expect(resume.saves).toEqual([]);
-  }, 60_000);
+  }, 120_000);
+
+  it("旧目录图全部缺失：生成首张前先读旧选页，不创建挑页流", async () => {
+    const resume = memoryStore();
+    const identities = Array.from({ length: SHEETS }, (_, i) => {
+      const first = i * 12 + 1;
+      return { gcsUri: `gs://test/${knowledgeCardSheetObjectName(USER, DOC, i + 1)}`, pageNumbers: Array.from({length: Math.min(12, PAGES - first + 1)}, (_, offset) => first + offset) };
+    });
+    const identity = { version: "page-selection-v1", model: "glm-5.3-flashx", pageCount: PAGES, sheets: identities };
+    const key = `${resume.store.prefix}/page-selection/${createHash("sha256").update(JSON.stringify(identity)).digest("hex")}.json`;
+    const pages = [{ pageNumber: 55, reason: "旧书已选" }];
+    resume.data.set(key, { identity, pages });
+    const hook = vi.fn();
+    __setKnowledgeCardDistillGatewayInvokerForTest(hook);
+    const result = await knowledgeStructuredDistillContext.run({ evidence: memoryStore("e").store, resume: resume.store } as any, () =>
+      knowledgeCardResumablePageSelector("glm-5.3-flashx").stream!(PAGES, SHEETS, () => {}, identities));
+    expect(result).toEqual(pages);
+    expect(hook).not.toHaveBeenCalled();
+    expect(resume.saves).toEqual([]);
+  });
 
   it("目录页失败时：缺页的组不派发，已凑齐的组收尾并照常落缓存，整次备料报目录页的错", async () => {
     const bucket = fakeBucket();
+    // 第一组已具备全部目录图，第二组第十张上传失败。
+    for (let index = 1; index <= SHEETS; index++) {
+      if (index !== 10) bucket.objects.set(knowledgeCardSheetObjectName(USER, DOC, index), Buffer.from("已存缩略图"));
+    }
     bucket.hooks.fail = (_n, name) => Number(/s-(\d+)\.jpg$/.exec(name)![1]) === 10;
     const resume = memoryStore();
     const calls: number[] = [];
