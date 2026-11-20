@@ -293,7 +293,7 @@ export async function invokeKnowledgeStructuredDistill(params: {
     const walk=async(piece:KnowledgeDistillPiece,depth:number,last:KnowledgeDistillFailureCategory):Promise<void>=>{
       const children=last==='content_safety'||depth>=KNOWLEDGE_DISTILL_SPLIT_MAX_DEPTH?null:splitKnowledgeDistillPiece(piece);
       if(!children){failedPieces.push({piece,category:last});order.push({ok:false});return;}
-      for(const [k,child] of children.entries()){
+      for(const [k,child] of Array.from(children.entries())){
         const path=piece.path?`${piece.path}-${k}`:`split-${k}`;
         const dg=hash({contract:KNOWLEDGE_DISTILL_SPLIT_VERSION,parent:digest,batch:index,path,bodies:child.pages.map(p=>p.body)});
         const part:KnowledgeSource={...source,pages:child.pages.map((p,i)=>({id:uuid(`${dg}:${i}`),headline:p.headline,body:p.body,imageUrl:'',role:'reading'}))};

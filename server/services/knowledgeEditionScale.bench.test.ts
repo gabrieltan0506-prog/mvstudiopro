@@ -51,7 +51,7 @@ for (const [n, strict] of [[20, false], [3000, false]] as const) {
       onProgress: p => { const step = p.step || `选节第${p.pass}轮`; if (step !== lastStep) { const now = performance.now(); stepTimes[lastStep] = (stepTimes[lastStep] || 0) + Math.round(now - lastAt); lastStep = step; lastAt = now; } } });
     stepTimes[lastStep] = (stepTimes[lastStep] || 0) + Math.round(performance.now() - lastAt);
     const prepareMs = Math.round(performance.now() - t0);
-    expect(result.editionIssues?.filter(i => i.kind === "selection")).toEqual([]);
+    expect(result.editionIssues?.filter((i: { kind?: string }) => i.kind === "selection")).toEqual([]);
 
     const timed: Record<string, number> = {};
     const time = <T,>(label: string, f: () => T) => { const t = performance.now(); const v = f(); timed[label] = Math.round(performance.now() - t); return v; };
@@ -94,6 +94,6 @@ it("3000 节默认目标 120 节：精华选节成功（原第 3 轮零压缩而
   const storage = new Map<string, any>();
   const result = await prepareKnowledgeCardEditions({ sourceMarkdown: md, invoke: fakeInvoke({ calls: 0, maxRequest: 0, maxResponse: 0 }) as any,
     evidence: { prefix: "repro", read: async (k: string) => storage.get(k) ?? null, save: async (k: string, v: any) => { storage.set(k, v); } } });
-  expect(result.editionIssues?.filter(i => i.kind === "selection")).toEqual([]);
+  expect(result.editionIssues?.filter((i: { kind?: string }) => i.kind === "selection")).toEqual([]);
   expect(planKnowledgeCardPages(result.markdown).pageCount).toBeGreaterThan(0);
 }, 300_000);

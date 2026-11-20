@@ -79,7 +79,7 @@ describe("两档准备：各规模两档都选出现有规则给出的图数", (
   for (const n of SIZES) it(`${n} 节`, async () => {
     const { storage, evidence } = memory(`e-${n}`);
     const result = await prepareKnowledgeCardEditions({ sourceMarkdown: book(n), invoke: fakeInvoke([]) as any, evidence });
-    expect(result.editionIssues?.filter(i => i.kind === "selection")).toEqual([]);
+    expect(result.editionIssues?.filter((i: { kind?: string }) => i.kind === "selection")).toEqual([]);
     expect(storage.get(`e-${n}/source.json`).selectionAllocation).toBe(KNOWLEDGE_SELECTION_ALLOCATION);
     for (const [level, markdown, cap] of [["concise", result.markdown, 30], ["full", result.fullEditionMarkdown, 48]] as const) {
       const plan = knowledgeEditionImagePlan(markdown)!;

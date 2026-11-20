@@ -75,7 +75,7 @@ function buildLibrary(s: Scale): LayoutLibrary {
     ...(s.legacy ? {} : { supplement: `### 图外小节\n\n${prose(`${s.name}补${i}`, s.supplementChars)}` }),
     imageUrl: `gs://test/images/${s.name}/${i}.png`, imageJobId: `${s.name}-job-${i}`, role: "illustration" as const,
   }));
-  for (const [i, p] of pages.entries()) bucket.jobs.set(p.imageJobId, { userId: String(OWNER), status: "succeeded",
+  for (const [i, p] of Array.from(pages.entries())) bucket.jobs.set(p.imageJobId, { userId: String(OWNER), status: "succeeded",
     input: { action: "platform_composite_sheet_progress", params: { kind: "single_page_knowledge_card" } }, output: { compositeImageUrl: p.imageUrl, index: i } });
   const source = { title, detailLevel: "full", reviewBatchMode: "ready-images", readingContract: KNOWLEDGE_READING_CONTRACT, pages };
   const doc = editableLayoutSchema.parse({

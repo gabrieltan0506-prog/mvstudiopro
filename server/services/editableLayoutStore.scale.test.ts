@@ -112,7 +112,7 @@ describe("大书与多本大书：外置图外内文（v2）", () => {
     const read = await readLayoutLibrary(OWNER, after as any, noMedia);
     expect(JSON.stringify(read.library)).toBe(JSON.stringify(library));
     const canonical = await readCanonicalLayoutLibrary(OWNER, after as any);
-    for (const [i, doc] of canonical.library!.documents.entries()) {
+    for (const [i, doc] of Array.from(canonical.library!.documents.entries())) {
       expect(knowledgeSourceDigest(doc.publication!.source)).toBe(knowledgeSourceDigest(library.documents[i].publication!.source));
       expect(knowledgeReviewBatches(doc.publication!.source)).toEqual(knowledgeReviewBatches(library.documents[i].publication!.source));
       expect(doc.publication!.inputFingerprint).toBe(library.documents[i].publication!.inputFingerprint);
