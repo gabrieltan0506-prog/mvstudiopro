@@ -1386,3 +1386,16 @@ it('仅保活判定：联网检索的工具调用帧、引用注释与检索回�
   await readGlmSseStream(body, 1024 * 1024, { onSubstantiveDelta: () => { substantive += 1; } });
   expect(substantive).toBe(4);
 });
+
+it('搜索发单前存待发送回执失败时零发单，收到结果后存档失败也不切通道重购',async()=>{
+  const {guardKnowledgeEditionEvidence}=await import('./knowledgeEditionRecovery');
+  for(const state of ['pending','received']){
+    const f=make();
+    const evidence=guardKnowledgeEditionEvidence({...f.evidence,save:async(k,v)=>{
+      if((v as {state?:string}).state===state)throw new Error('gcs_upload_failed:403');
+      await f.evidence.save(k,v);
+    }});
+    await expect(invokeKnowledgePublicationRoutes(f.request,evidence,f.deps)).rejects.toThrow('章节检查点');
+    expect(f.deps.fetch).toHaveBeenCalledTimes(state==='pending'?0:1);
+  }
+});

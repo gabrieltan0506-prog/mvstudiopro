@@ -94,6 +94,32 @@ export async function deleteKnowledgeCardRecovery(userId:string,jobId:string){
   const [anchor]=await hydrateStagedManuscriptRows([rawAnchor],undefined,true);
   return markKnowledgeRecoveryDeleted(userId,anchor);
 }
+/** 续作沿用原单及其检查点。已领取的任务只跟踪；明确取消的任务保持终止。 */
+export async function resumeLastKnowledgeVerification(userId: string) {
+  const db = await database();
+  const [last] = await db.select({
+    id: jobs.id, status: jobs.status, attempts: jobs.attempts,
+    action: sql<string>`${jobs.input}->>'action'`,
+    cancelled: sql<string | null>`${jobs.input}->>'cancelRequestedAt'`,
+  }).from(jobs).where(and(eq(jobs.userId, userId), eq(jobs.type, "platform"),
+    sql`${jobs.input}->>'action' in ('knowledge_card_distill', 'knowledge_card_derive_level')`
+  )).orderBy(desc(jobs.createdAt), desc(jobs.id)).limit(1);
+  if (!last || last.action !== "knowledge_card_derive_level") throw new Error("最近一次读档还没有可接续的核实任务");
+  if (last.cancelled) throw new Error("原任务已手动终止");
+  if (last.status !== "failed") return { jobId: last.id };
+  const ownerAndId = and(eq(jobs.id,last.id),eq(jobs.userId,userId));
+  const updated = await db.update(jobs).set({status:"queued",error:null,updatedAt:new Date()})
+    .where(and(ownerAndId,eq(jobs.status,"failed"),eq(jobs.attempts,last.attempts),
+      sql`coalesce(${jobs.input}->>'cancelRequestedAt','') = ''`,
+      sql`${jobs.error} like '%章节检查点保存或读取失败%'`
+    )).returning({id:jobs.id});
+  if (!updated.length) {
+    const [current] = await db.select({status:jobs.status}).from(jobs).where(ownerAndId);
+    if (!current || current.status === "failed") throw new Error("原任务当前无法从核实检查点续作");
+  }
+  return { jobId:last.id };
+}
+
 export async function listKnowledgeCardRecovery(userId: string, cursor?: { at: string; id: string }) {
   const db = await database();
   const rows = await db.select({id:jobs.id,userId:jobs.userId,status:jobs.status,input:jobs.input,createdAt:jobs.createdAt,

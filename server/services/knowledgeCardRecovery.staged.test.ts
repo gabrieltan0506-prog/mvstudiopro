@@ -21,7 +21,7 @@ vi.mock("./handbookManuscriptStage", async original => ({
     return t;
   },
 }));
-import { getKnowledgeCardRecovery, listKnowledgeCardRecovery } from "./knowledgeCardRecovery";
+import { getKnowledgeCardRecovery, listKnowledgeCardRecovery, resumeLastKnowledgeVerification } from "./knowledgeCardRecovery";
 
 const sha = (t: string) => createHash("sha256").update(t, "utf8").digest("hex");
 const pg = new PGlite();
@@ -94,4 +94,25 @@ describe("恢复 SQL（PGlite）：新增 manuscriptDigest 分支", () => {
     await expect(listKnowledgeCardRecovery("7")).rejects.toThrow("暂时读不到");
     await expect(getKnowledgeCardRecovery("7", "distill")).rejects.toThrow("暂时读不到");
   });
+});
+
+it("续作只接回自己的原核实单，并发点击保留检查点与尝试数",async()=>{
+  await insert("verify","7",{action:"knowledge_card_derive_level"},{distillStageDone:915},"failed");
+  await pg.exec("update jobs set error='章节检查点保存或读取失败', attempts=2 where id='verify'");
+  const results=await Promise.all([resumeLastKnowledgeVerification("7"),resumeLastKnowledgeVerification("7")]);
+  expect(results).toEqual([{jobId:"verify"},{jobId:"verify"}]);
+  expect((await pg.query("select status,attempts,output from jobs where id='verify'")).rows)
+    .toEqual([{status:"queued",attempts:2,output:{distillStageDone:915}}]);
+  await expect(resumeLastKnowledgeVerification("8")).rejects.toThrow();
+  await pg.exec("update jobs set status='succeeded' where id='verify'");
+  expect(await resumeLastKnowledgeVerification("7")).toEqual({jobId:"verify"});
+  expect((await pg.query("select status from jobs where id='verify'")).rows).toEqual([{status:"succeeded"}]);
+});
+it("取消和其他失败不重排，新书尚无核实任务时也不唤醒旧书",async()=>{
+  await insert("verify","7",{action:"knowledge_card_derive_level"},{}, "failed");
+  await expect(resumeLastKnowledgeVerification("7")).rejects.toThrow();
+  await pg.exec(`update jobs set input='{"action":"knowledge_card_derive_level","cancelRequestedAt":"now"}',error='章节检查点保存或读取失败' where id='verify'`);
+  await expect(resumeLastKnowledgeVerification("7")).rejects.toThrow("手动终止");
+  await insert("another","7",{action:"knowledge_card_distill"},{});
+  await expect(resumeLastKnowledgeVerification("7")).rejects.toThrow("最近一次读档");
 });

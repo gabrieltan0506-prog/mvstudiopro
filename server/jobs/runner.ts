@@ -1,3 +1,4 @@
+import { editionCheckpointRequeueDelay, isTransientEditionCheckpointError } from "../services/knowledgeEditionRecovery";
 import { normalizeCanvasImageAspectRatio } from "../../shared/canvasGptImage2JobInput";
 import { startFileConversionWorker, stopFileConversionWorker, drainFileConversions, fileConversionsBusy } from "./fileConversionWorker";
 import {
@@ -683,6 +684,7 @@ function buildPlatformJobError(error: unknown): Error {
   const userMsg = getPlatformJobErrorMessage(error);
   // Embed original message (≤400 chars) so operators can see actual cause in job.error
   const enriched = new Error(`${userMsg} [原始错误: ${originalMsg.slice(0, 400)}]`);
+  if (isTransientEditionCheckpointError(error)) enriched.cause = error;
   // Preserve timeout classification in the name so downstream getJobFailureMessage() works correctly
   if (isPlatformTimeoutError(error)) {
     enriched.name = "TimeoutError";
@@ -3796,9 +3798,10 @@ async function processPlatformJob(
       const derived = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), async () => {
         if(params.editionVersion!==2)return deriveKnowledgeCardCompact(deriveOptions);
         const {prepareKnowledgeCardEditions}=await import('../services/knowledgeCardEditionPreparation.js');
-        const {downloadGcsObjectVersioned,uploadBufferToGcs,getGcsBucketName}=await import('../services/gcs.js');
+        const {downloadGcsObjectVersioned,uploadBufferToGcs,getGcsBucketName,listGcsObjectNamesByPrefix}=await import('../services/gcs.js');
         return prepareKnowledgeCardEditions({sourceMarkdown:fullMarkdown,model:receiptModel,targetSections,abortSignal:cancel.signal,onProgress:deriveOptions.onProgress,
           evidence:{prefix:`knowledge-editions/user-${jobUserId}/${platformJobId}`,
+            listKeys:prefix=>listGcsObjectNamesByPrefix({prefix,allPages:true}),
             read:async key=>{try{return JSON.parse((await downloadGcsObjectVersioned({gcsUri:`gs://${getGcsBucketName()}/${key}`})).buffer.toString());}catch(error){if((error as Error).message==='gcs_stat_failed:404')return null;throw error;}},
             save:async(key,value)=>{await uploadBufferToGcs({objectName:key,buffer:Buffer.from(JSON.stringify(value)),contentType:'application/json'});},
           }});
@@ -4561,6 +4564,15 @@ export async function runClaimedJob(
     } else if (resolveFailedJobDisposition(job, error) === "fail" && isKlingRetiredError(error)) {
       // 可灵停用：不重排（重排只会再被拒），直接失败；无服务端计费，无需退款。
       await markJobFailed(job.id, message);
+    } else if (job.type === "platform" && isRecord(job.input) && job.input.action === "knowledge_card_derive_level"
+      && error instanceof Error && isTransientEditionCheckpointError(error.cause)) {
+      const delay = editionCheckpointRequeueDelay(job.attempts);
+      if (delay === undefined) {
+        await markJobFailed(job.id, message);
+      } else {
+        await new Promise(resolve => setTimeout(resolve, delay));
+        await requeueJob(job.id, message);
+      }
     } else if (job.type === "platform" && isRecord(job.input) && job.input.action === "knowledge_card_distill"
       && isRecord(job.input.params) && job.input.params.billingPolicy === "interior-pages-v1") {
       /**

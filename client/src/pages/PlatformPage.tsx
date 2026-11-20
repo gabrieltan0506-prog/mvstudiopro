@@ -14964,7 +14964,7 @@ export default function PlatformPage() {
                     <><Film className="h-4 w-4" />生成编导分镜图</>
                   )}
                 </button>
-                <KnowledgeCardRecovery disabled={recoveryBlocked} onApply={applyKnowledgeCardRecovery} />
+                <KnowledgeCardRecovery key={workbenchUserKey ?? "guest"} disabled={recoveryBlocked} onApply={applyKnowledgeCardRecovery} />
                 {(customNoteImageUpper || customNoteImageLower || customNoteError || customOptimizeResult) && !customNoteBusy && (
                   <button
                     type="button"
