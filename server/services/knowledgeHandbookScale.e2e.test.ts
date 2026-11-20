@@ -59,7 +59,7 @@ const sha = (v: unknown) => createHash("sha256").update(typeof v === "string" ? 
 /** 编号也写成汉字：替身正文按真实中文约 3 字节/字计量，请求体字节数才可信。 */
 const cn = (v: string) => v.replace(/[0-9a-z]/gi, c => "〇一二三四五六七八九甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥天地人和"[parseInt(c, 36)]!);
 /** 每句互不相同的中文（确定性去重只删重复句；替身稿不能被误删）。 */
-const prose = (tag: string, chars: number) => { let s = "", k = 0; const t = cn(tag); while (s.length < chars) s += `${t}第${cn(k++.toString(10))}条要点记述史实经过、前因与影响。`; return s.slice(0, chars); };
+const prose = (tag: string, chars: number) => { let s = "", k = 0; const t = cn(tag); while (s.length < chars) s += `${t}第${cn((k++).toString(10))}条要点记述史实经过、前因与影响。`; return s.slice(0, chars); };
 const design = { palette: "ink-cinnabar", layout: "editorial", table: "rules", frame: "none", motif: "bamboo-seal", reason: "依据本章具体内容组织层次，保持完整正文可读。" } as const;
 /** 模型每页除正文外的输出（按审校合同估）：8 条事实 × 约 70 字、读图描述约 120 字、1 条疑点约 100 字。 */
 const facts = (tag: string) => Array.from({ length: 8 }, (_, j) => ({ term: `${tag}要点${j}`, statement: prose(`${tag}事实${j}`, 64) }));
