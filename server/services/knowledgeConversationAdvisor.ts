@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import type { EditableLayout } from "../../shared/editableLayout";
 import type { KnowledgePublicationContext } from "../../shared/knowledgePublication";
 import { knowledgeBookLayoutBatches, knowledgeManuscript, parseKnowledgeManuscript } from "../../shared/knowledgePublication";
-import { knowledgeConversationAnswerSchema, KNOWLEDGE_SUPPLEMENT_MAX_PAGES } from "../../shared/knowledgeConversation";
+import { knowledgeConversationAnswerSchema, KNOWLEDGE_SUPPLEMENT_MAX_PAGES, KNOWLEDGE_CONVERSATION_ANSWER_MAX_CHARS } from "../../shared/knowledgeConversation";
 import { KNOWLEDGE_RESEARCH_MARKER } from "../../shared/knowledgeResearch";
 import { loadKnowledgePublication, readKnowledgeImage } from "./knowledgePublicationAdvisor";
 import { resolveRegisteredPostProdMediaSource, loadSucceededJobOutputSources } from "./postProdMediaSource";
@@ -215,13 +215,30 @@ async function reviewKnowledgeLayoutBatches(
   const failed=outcomes.find((outcome):outcome is PromiseRejectedResult=>outcome.status==="rejected");
   if(failed)throw failed.reason;
   const answer=knowledgeConversationAnswerSchema.parse({kind:"knowledge_conversation_v1",requestId:input.conversation.requestId,
-    answer:answers.map(a=>a.answer).join("\n\n"),sources:[],supplementalImages:[],
+    answer:knowledgeLayoutMergedAnswer(answers.map(a=>a.answer)),sources:[],supplementalImages:[],
     layoutPlan:{kind:"knowledge_book_layout_v1",sourceDigest:book.sourceDigest,chapters:answers.flatMap(a=>a.layoutPlan!.chapters)}});
   validateKnowledgeBookLayoutPlan(answer.layoutPlan,book);
   await deps.save(`${prefix}/report.json`,{fingerprint,answer});
   return answer;
 }
 
+/**
+ * 整册排版各组说明的合并：未超出回答上限时逐字按组序以空行连接（与原先完全一致）；
+ * 超出时（200 章 50 组、每组说明约 2700 字即超）改为简短汇总——组数 + 每组首行摘要，保证不超限。
+ * 各组完整说明永久保存在分组回执 batch-N/report.json，不截断、不丢弃；汇总只由已存分组回执确定，回放结果逐字相同。
+ */
+export function knowledgeLayoutMergedAnswer(groups: readonly string[]) {
+  const joined = groups.join("\n\n");
+  if (joined.length <= KNOWLEDGE_CONVERSATION_ANSWER_MAX_CHARS) return joined;
+  const header = `共 ${groups.length} 组。各组说明合计 ${joined.length} 字，超过单条回答上限；各组完整安排说明已逐组保存在分组回执，此处列每组首行摘要。`;
+  const prefix = (i: number) => `第${i + 1}组：`;
+  const room = Math.max(0, Math.floor((KNOWLEDGE_CONVERSATION_ANSWER_MAX_CHARS - header.length - groups.length * 12) / Math.max(1, groups.length)));
+  const lines = groups.map((text, i) => {
+    const first = (text.split("\n").find(line => line.trim()) || "").trim();
+    return prefix(i) + (first.length > room ? first.slice(0, Math.max(0, room - 1)) + "…" : first);
+  });
+  return [header, ...lines].join("\n");
+}
 /** 云稿对话为追加日志；未知请求不能靠删记录或换编号再次购买。 */
 export async function validateKnowledgeConversationTransition(owner:number,before:EditableLayout|undefined,after:EditableLayout,read=store.read, checkRetry=async(owner:number,doc:EditableLayout,id:string)=>(await import("./knowledgeConversationRetry")).checkKnowledgeConversationRetry(owner,doc,id)) {
   const old=before?.publication?.conversation||[],next=after.publication?.conversation||[];

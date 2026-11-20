@@ -15,6 +15,12 @@ function liftPresentationSubtitle(value: unknown): unknown {
   }
   return rest;
 }
+/**
+ * 单章排版展示正文上限。原 12000 字低于新预算（readingBudgetVersion=2）的单章上限：完整版一章最多 700 + 30 × 1300 = 39700 字，
+ * 3 章 × 5.5 万字图外内文的小书每章 13700 字即被挡在排版（1121 演练）。改为页正文 schema 上限 5 万字（展示正文会写回页 body）；
+ * 只放宽，原先通过的方案仍通过。
+ */
+export const KNOWLEDGE_PRESENTATION_MAX_CHARS = 50000;
 /** 顾问只安排已保存章节；展示正文独立保存，完整底稿、原图和原审校不覆盖。 */
 export const knowledgeBookLayoutPlanSchema = z.object({
   kind: z.literal("knowledge_book_layout_v1"),
@@ -60,7 +66,7 @@ export function validateKnowledgeBookLayoutPlan(value: unknown, input: Pick<Know
     })) throw Error("图文排版只能依据已实际审校且一致的原图，不得引用缺图或不确定的图片代替文字");
     if (input.detailLevel === "full" && !imageIds.length)
       throw Error("完整版展示正文调整必须列出实际承载知识的原图；未配图章节保留完整文字");
-    if (knowledgeReadingMarkdown(presentation.reading).length > 12000)
+    if (knowledgeReadingMarkdown(presentation.reading).length > KNOWLEDGE_PRESENTATION_MAX_CHARS)
       throw Error("排版展示正文超出章节容量，未截断或覆盖完整底稿");
   }
   validateKnowledgeDesignBatch(plan.chapters.filter(p=>p.design).map(p => ({reading:{decoration:{design:p.design}}})));

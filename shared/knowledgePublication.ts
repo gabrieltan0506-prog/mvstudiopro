@@ -13,6 +13,20 @@ import { knowledgeReadingSchema } from "./knowledgePublicationLayout";
  * 这里只是放宽上限（旧稿都 ≤5 万字，解析结果与摘要逐字不变）；真正的容量保护仍是整库 64MB 与审校分批。
  */
 export const KNOWLEDGE_SUPPLEMENT_MAX_CHARS = 400_000;
+/**
+ * 单章整理容量（汉字）：一章「正文 + 图外内文」不超过此字数时，单次逐章整理请求（服务端按 80 万字节核算，中文约 3 字节/字，
+ * 另含指令、预算合同、邻章上下文与配图额度约 5 万字节）必定装得下。图外内文合同上限是 40 万字，大于此值的章整理时必失败，
+ * 所以在建稿（确认出图之前）就报出是哪一章、超出多少（1121 演练钉住：24 万字装得下，约 26 万字即超）。
+ */
+export const KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS = 240_000;
+export const knowledgeChapterChars = (page: { body: string; supplement?: string }) => page.body.length + (page.supplement?.length || 0);
+/** 超出单章整理容量的章（index 从 0 起）；无则空数组。 */
+export function knowledgeChapterCapacityIssues(pages: readonly { headline: string; body: string; supplement?: string }[]) {
+  return pages.flatMap((page, index) => {
+    const chars = knowledgeChapterChars(page);
+    return chars > KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS ? [{ index, headline: page.headline, chars, excess: chars - KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS }] : [];
+  });
+}
 export type KnowledgePublicationPagination = { imagePages: number; totalPages: number };
 
 /** 知识卡专用合同；学习报告只提供视觉参考，不携带剧情、镜头或音轨字段。 */

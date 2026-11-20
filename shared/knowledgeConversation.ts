@@ -3,6 +3,8 @@ import { knowledgeBookLayoutPlanSchema } from "./knowledgeBookLayout";
 import { knowledgeCitationSchema } from "./knowledgeResearch";
 
 export const KNOWLEDGE_SUPPLEMENT_MAX_PAGES = 8;
+/** 顾问回答（answer）的字数上限；整册排版合并说明超过时改为简短汇总，各组原说明保留在分组回执。 */
+export const KNOWLEDGE_CONVERSATION_ANSWER_MAX_CHARS = 131072;
 export const knowledgeConversationRequestSchema = z.object({
   id: z.string().uuid(), retryOf: z.string().uuid().optional(), question: z.string().trim().min(2).max(8000),
   action: z.enum(["layout","supplement"]).optional(),
@@ -11,7 +13,7 @@ export const knowledgeConversationRequestSchema = z.object({
 }).strict();
 export const knowledgeConversationAnswerSchema = z.object({
   kind: z.literal("knowledge_conversation_v1"), requestId: z.string().uuid(),
-  answer: z.string().trim().min(1).max(131072),
+  answer: z.string().trim().min(1).max(KNOWLEDGE_CONVERSATION_ANSWER_MAX_CHARS),
   sources: z.array(knowledgeCitationSchema).max(20),
   layoutPlan: knowledgeBookLayoutPlanSchema.optional(),
   supplementalImages: z.array(z.object({

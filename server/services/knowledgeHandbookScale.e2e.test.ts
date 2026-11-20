@@ -44,8 +44,12 @@ import { editableLayoutSchema, layoutLibrarySchema, type EditableLayout, type La
 import { knowledgeManuscript, knowledgeReviewBatches, knowledgeReviewSchema, knowledgeBatchResultSchema, knowledgeBatchRequestId } from "../../shared/knowledgePublication";
 import { knowledgeReadingCharBudgets, KNOWLEDGE_READING_CONTRACT } from "../../shared/knowledgeEditionBudget";
 import { knowledgeParallelAfterBatch } from "../../client/src/lib/knowledgePublicationParallelState";
+import { KNOWLEDGE_CONVERSATION_ANSWER_MAX_CHARS } from "../../shared/knowledgeConversation";
+import { layoutFromSource } from "../../shared/editableLayout";
+import { KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS, knowledgeChapterCapacityIssues } from "../../shared/knowledgePublication";
+import { knowledgeNonWhitespaceLength } from "../../shared/knowledgeEditionBudget";
 import { readCanonicalLayoutLibrary, writeLayoutLibrary, layoutLibraryBufferCache } from "./editableLayoutStore";
-import { reviewKnowledgePublication, validateKnowledgePublicationAccess, knowledgePublicationWorkPlan, knowledgeEvidencePrefix, KNOWLEDGE_VISUAL_ADVISOR_MODEL } from "./knowledgePublicationAdvisor";
+import { buildKnowledgeReviewRequest, knowledgePublicationAdvisorDeps, knowledgeSourceDigest, KNOWLEDGE_REVIEW_REQUEST_MAX_TOKENS, KNOWLEDGE_COMPRESSION_CAPACITY_RATIO, reviewKnowledgePublication, validateKnowledgePublicationAccess, knowledgePublicationWorkPlan, knowledgeEvidencePrefix, KNOWLEDGE_VISUAL_ADVISOR_MODEL } from "./knowledgePublicationAdvisor";
 import { reviewKnowledgeConversation } from "./knowledgeConversationAdvisor";
 import { loadKnowledgeBookLayoutInput, loadKnowledgeBookLayoutView, knowledgeBookLayoutCache, knowledgeBookLayoutInput, KNOWLEDGE_BOOK_LAYOUT_REQUEST_MAX_BYTES } from "./knowledgeBookLayout";
 
@@ -137,6 +141,7 @@ async function rehearse(s: Scale) {
     }
     const out = envelope(value, image);
     m.requests[kind].push({ bytes, outChars: JSON.stringify(value).length });
+    if (kind === "compress") (m.compressRequestDigests ||= []).push(sha(request));
     return out;
   });
   const advisor = { post, image: async (uri: string) => ({ buffer: Buffer.from(uri), sha256: sha(uri), mimeType: "image/png", width: 1024, height: 1365 }), recordImage: async () => false };
@@ -211,7 +216,12 @@ async function rehearse(s: Scale) {
     const answer = await reviewKnowledgeConversation(OWNER, { documentId: docId, purpose: "conversation", batchIndex: 0, attempt: 0 }, { post: layoutPost as any });
     m.layoutGroups = layoutPost.mock.calls.length;
     m.layoutAnswerChars = answer.answer.length;
+    m.layoutAnswer = answer.answer;
+    m.layoutGroupAnswers = layoutPost.mock.results.map(r => r.value).length;
     const saved = await saveLibrary(m, "layout-adopted", d => { d.publication!.conversation![0]!.response = answer; d.publication!.layoutConversationId = requestId; });
+    // 恢复回放：再请求一次同一排版，必须零调用取回与云稿 turn.response 逐字相同的结果。
+    const replay = await reviewKnowledgeConversation(OWNER, { documentId: docId, purpose: "conversation", batchIndex: 0, attempt: 0 }, { post: (async () => { throw new Error("回放不得调用模型"); }) as any });
+    m.replayEqual = JSON.stringify(replay) === JSON.stringify(answer);
     knowledgeBookLayoutCache.clear();
     const view = await loadKnowledgeBookLayoutView(OWNER, docId, String(saved.generation));
     m.viewPages = view.doc.pages.length;
@@ -223,7 +233,7 @@ async function rehearse(s: Scale) {
   return finish();
 }
 
-const report = (m: Metrics) => console.log(`[规模演练] ${JSON.stringify({ ...m, requests: undefined, layoutRequestDigests: m.layoutRequestDigests?.length })}`);
+const report = (m: Metrics) => console.log(`[规模演练] ${JSON.stringify({ ...m, requests: undefined, layoutAnswer: undefined, layoutRequestDigests: m.layoutRequestDigests?.length, compressRequestDigests: m.compressRequestDigests ? sha([...m.compressRequestDigests].sort()) : undefined })}`);
 
 beforeEach(() => { bucket.objects.clear(); bucket.jobs.clear(); layoutLibraryBufferCache.clear(); knowledgeBookLayoutCache.clear(); });
 
@@ -246,7 +256,8 @@ describe("手册后半程多规模演练（替身模型 + 内存存储）", () =
     expect(m.reached).toBe("view");
     expect(m.skippedConsistency).toBe(false);
     // 金值：在 c30e8a9 基线（未改排版输入上限）上实测记录；改动后必须逐字一致（输入摘要与每组请求体都不变）。
-    expect({ digest: m.layoutSourceDigest, requests: m.layoutRequestDigests, review: m.reviewReportSha }).toEqual(LEGACY4_GOLDEN);
+    expect({ digest: m.layoutSourceDigest, requests: m.layoutRequestDigests, review: m.reviewReportSha, compress: sha([...m.compressRequestDigests].sort()) }).toEqual(LEGACY4_GOLDEN);
+    expect(m.replayEqual).toBe(true);
   }, 60_000);
 
   it("48 章 × 图外内文 5.5 万字（今晚线上规模）：全程走通；每个请求体与云稿体积在上限内", async () => {
@@ -257,7 +268,10 @@ describe("手册后半程多规模演练（替身模型 + 内存存储）", () =
     expect(m.skippedConsistency).toBe(true);
     expect(m.reviewBatches).toBe(48);
     // 金值同上：48 章排版输入摘要与各组请求体不因改动而变。
-    expect({ digest: m.layoutSourceDigest, requests: sha(m.layoutRequestDigests || []) }).toEqual(S48_GOLDEN);
+    expect({ digest: m.layoutSourceDigest, requests: sha(m.layoutRequestDigests || []), review: m.reviewReportSha, compress: sha([...m.compressRequestDigests].sort()) }).toEqual(S48_GOLDEN);
+    expect(m.replayEqual).toBe(true);
+    // 未超限的稿：合并后的排版说明 = 各组说明按序以空行连接（逐字不变）。
+    expect(m.layoutAnswer).toBe(Array.from({ length: m.layoutGroups }, () => prose("排版说明", 600)).join("\n\n"));
     // 审校与压缩请求体的容量核算上限是 800000（getRaw）；排版每组 750000。
     expect(m.max.review.bytes).toBeLessThan(800_000);
     expect(m.max.compress.bytes).toBeLessThan(800_000);
@@ -281,10 +295,10 @@ describe("手册后半程多规模演练（替身模型 + 内存存储）", () =
 });
 
 // 金值：在 c30e8a9 基线（整册排版输入按整册判断 65 万字节）上实测记录。
-const LEGACY4_GOLDEN = { digest: "c04522a97a2d86e60edf3cffe9b41ae21d7416dfb5259f9c579a1646b3b9a300", requests: ["609100132f17631d22130c4d4d028034ad6eaee9e1f36b17052330acbce8f57c"], review: "1631ee99091d3e9a64eff9641864a46dbcfc07463d14a19f826ad7061c910e31" };
-const S48_GOLDEN = { digest: "82d5ada79240c6ab104172b8c1aff4125ecc56a32a5d8e5136d60a5d6e90570d", requests: "6a639e82c05f29b5927dc3f4da15d9f77f4011293d55bb10736017e0481312f6" };
+const LEGACY4_GOLDEN = { digest: "c04522a97a2d86e60edf3cffe9b41ae21d7416dfb5259f9c579a1646b3b9a300", requests: ["609100132f17631d22130c4d4d028034ad6eaee9e1f36b17052330acbce8f57c"], review: "1631ee99091d3e9a64eff9641864a46dbcfc07463d14a19f826ad7061c910e31", compress: "0ffaf2a91f9abe2e45c92899455f029b401765b18bf97ad84bfb9ab773a94444" };
+const S48_GOLDEN = { digest: "82d5ada79240c6ab104172b8c1aff4125ecc56a32a5d8e5136d60a5d6e90570d", requests: "6a639e82c05f29b5927dc3f4da15d9f77f4011293d55bb10736017e0481312f6", review: "15e27fc3c62268279459f06ad19612cbd71b700b8620f0ef57a54791fbf35ad5", compress: "ea0c3479ff99a03c733ef5e12a36f7a2223eb5b6bb16617ce2c7ee472bfe4505" };
 
-describe("随规模出问题的边界（钉住数字；需别的分工修的只记录，不在此改）", () => {
+describe("随规模出问题的边界（先钉住、后修掉）", () => {
   it("整册排版输入：容量按单组判断——单组超过 65 万字节仍拒收，不截断", () => {
     const pages = Array.from({ length: 2 }, (_, i) => ({ id: uid(`cap-${i}`), headline: `章${i}`, body: prose(`容${i}`, 300), imageUrl: "" }));
     const review = { kind: "knowledge_publication_v1" as const, sourceDigest: "a".repeat(64), title: "容量", pages: pages.map(p => ({ id: p.id, headline: p.headline, body: p.body, imageDescription: "", imageStatus: "absent" as const,
@@ -296,41 +310,89 @@ describe("随规模出问题的边界（钉住数字；需别的分工修的只�
     expect(knowledgeBookLayoutInput({ doc, review, receipt: { report: review, sourceImages: [] }, prefix: "x" } as any).pages).toHaveLength(2);
   });
 
-  it("200 章旧结构稿：排版 50 组；合并后的排版说明受 131072 字上限（shared/knowledgeConversation.ts）——每组说明 >2620 字即在合并时拒收", async () => {
+  it("200 章旧结构稿 50 组排版：每组说明 2700 字、合并超 131072 字时改为简短汇总；各组原说明完整保留在分组回执，回放与云稿一致", async () => {
     const ok = await rehearse({ name: "legacy200ok", chapters: 200, supplementChars: 0, legacy: true, layoutAnswerChars: 2600 });
     report(ok);
     expect(ok.reached).toBe("view");
     expect(ok.layoutGroups).toBe(50);
-    expect(ok.layoutAnswerChars).toBe(50 * 2600 + 49 * 2);
+    // 未超限：逐字等于各组说明以空行连接
+    expect(ok.layoutAnswer).toBe(Array.from({ length: 50 }, () => prose("排版说明", 2600)).join("\n\n"));
     bucket.objects.clear(); bucket.jobs.clear(); layoutLibraryBufferCache.clear(); knowledgeBookLayoutCache.clear();
     const over = await rehearse({ name: "legacy200over", chapters: 200, supplementChars: 0, legacy: true, layoutAnswerChars: 2700 });
-    expect(over.max.layout.n).toBe(50);
-    // 各组回执已落盘（重试零调用复用），但合并时 answer 超过 131072 字被 knowledgeConversationAnswerSchema 拒收。
-    expect(over.stuck).toMatch(/131072/);
+    report(over);
+    expect(over.stuck).toBeUndefined();
+    expect(over.reached).toBe("view");
+    expect(over.replayEqual).toBe(true);
+    expect(over.layoutAnswer.length).toBeLessThanOrEqual(KNOWLEDGE_CONVERSATION_ANSWER_MAX_CHARS);
+    expect(over.layoutAnswer).toMatch(/^共 50 组/);
+    // 各组原说明一字不少地留在分组回执
+    const groups = Array.from(bucket.objects.keys()).filter(k => /\/conversation\/[^/]+\/batch-\d+\/report\.json$/.test(k));
+    expect(groups).toHaveLength(50);
+    for (const key of groups) expect(JSON.parse(bucket.objects.get(key)!.buffer.toString("utf8")).answer.answer).toBe(prose("排版说明", 2700));
   }, 300_000);
 
-  it("小书反而撞：3 章 × 5.5 万字图外内文，新预算每章分到 10 页续页（上限 13700 字），而排版展示正文上限 12000 字（shared/knowledgeBookLayout.ts）", async () => {
+  it("小书大图外内文：3 章 × 5.5 万字，新预算每章 10 页续页（上限 13700 字）——排版展示正文按预算放行（原 12000 字上限会卡住）", async () => {
     const m = await rehearse({ name: "s3big", chapters: 3, supplementChars: 55_000, reviewOvershoot: 0.95 });
     report(m);
     expect(m.max.compress.n).toBe(0); // 审校稿在预算内，统稿不压缩
-    expect(m.stuck).toMatch(/排版展示正文超出章节容量/);
+    expect(m.stuck).toBeUndefined();
+    expect(m.reached).toBe("view");
   }, 120_000);
 
-  it("单章图外内文容量：审校请求按 80 万字节核算——一章图外内文约 26 万字即超（合同上限 40 万字）；篇幅压缩三章一组，每章约 8.6 万字即整组超", async () => {
+  it("单章容量：整理入口对超出单次请求的章给出业务错误；篇幅压缩按字节分组（6 章 × 10 万字）全部完成", async () => {
     const m = await rehearse({ name: "cap1", chapters: 2, supplementChars: 300_000 });
     report(m);
-    // 第 1 批（单章 27 万字图外内文）在容量核算处即被挡下：没有调用模型，也没有截断。
-    expect(m.stuck).toMatch(/审校第1批：全书事实索引超过本次审校容量/);
+    // 已建好的稿（绕过建稿检查）：整理入口在发请求前给出明确业务错误——第几章、超出多少，没有调用模型，也没有截断。
+    expect(m.stuck).toMatch(/审校第1批：第1章《[^》]+》正文与图外内文过长，超过单次整理容量约[\d,]+字/);
     expect(m.max.review.n).toBe(0);
-    // 六章各 10 万字：逐章审校（单章约 30 万字节）能过；统稿后篇幅压缩三章一组约 90 万字节，整组在容量核算处被挡下。
-    // 新合同不挡排版（超出的章按续页排），但这些章拿不到压缩——错误与超出章记在 final-compress/budget.json。
+    // 六章各 10 万字：逐章审校（单章约 30 万字节）能过；统稿后篇幅压缩若固定三章一组约 90 万字节会超容量，改按字节分组后全部压缩完成。
     bucket.objects.clear(); bucket.jobs.clear(); layoutLibraryBufferCache.clear();
     const g = await rehearse({ name: "cap6", chapters: 6, supplementChars: 100_000 });
     report(g);
     expect(g.reached).toBe("view");
-    expect(g.max.compress.n).toBe(0);
     const budget = JSON.parse(bucket.objects.get(`${g.root}/final-compress/budget.json`)!.buffer.toString("utf8"));
-    expect(budget.error).toMatch(/全书事实索引超过本次审校容量/);
-    expect(budget.after).toHaveLength(6);
+    expect(budget.error).toBeUndefined();
+    expect(budget.after).toHaveLength(0);
+    // 固定三章一组约 90 万字节会超单次容量：改按字节分组（每组 ≤ 上限 × 安全比例），每组都在容量内
+    expect(g.max.compress.n).toBeGreaterThan(2);
+    expect(g.max.compress.bytes).toBeLessThan(800_000 * KNOWLEDGE_COMPRESSION_CAPACITY_RATIO);
   }, 120_000);
+});
+
+describe("容量常量与提速等价性", () => {
+  it(`单章整理容量常量：正文 + 图外内文 ≤ ${KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS} 汉字时单次整理请求必在 80 万字节内；建稿时超出即报第几章、超出多少`, async () => {
+    expect(KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS).toBe(240_000);
+    const page = (i: number, chars: number) => ({ id: uid(`cap-const-${i}`), headline: `第${i + 1}章`, body: "图".repeat(2000), supplement: "史".repeat(chars - 2000), imageUrl: `gs://test/c/${i}.png`, imageJobId: `c-${i}`, role: "illustration" as const });
+    const source = { title: "容量", detailLevel: "full" as const, reviewBatchMode: "ready-images" as const, readingContract: KNOWLEDGE_READING_CONTRACT, pages: [page(0, KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS)] };
+    const request = buildKnowledgeReviewRequest(source, "a".repeat(64), new Map([[source.pages[0]!.imageUrl, { mimeType: "image/png" }]]));
+    // 预算与输出合同、邻章上下文（各 2000 字图中文字）按最长形态补齐
+    request.systemInstruction.parts.push({ text: "预".repeat(8000) });
+    request.contents[0]!.parts.unshift({ text: "邻".repeat(4000) });
+    expect((await knowledgePublicationAdvisorDeps().count(request)).totalTokens).toBeLessThanOrEqual(KNOWLEDGE_REVIEW_REQUEST_MAX_TOKENS);
+    expect(knowledgeChapterCapacityIssues(source.pages)).toEqual([]);
+    const over = [page(0, 1000 + 2000), { ...page(1, KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS + 1234), headline: "大章" }];
+    expect(knowledgeChapterCapacityIssues(over)).toEqual([{ index: 1, headline: "大章", chars: KNOWLEDGE_CHAPTER_REVIEW_MAX_CHARS + 1234, excess: 1234 }]);
+    expect(() => layoutFromSource({ kind: "knowledge-publication", owner: "7", sourceId: "big", title: "大书", body: "", detailLevel: "full", readingContract: KNOWLEDGE_READING_CONTRACT,
+      pages: over.map((p, i) => ({ pageIndex: i + 1, headline: p.headline, body: p.body, supplement: p.supplement, knowledgeRole: "illustration" as const, imageJobId: p.imageJobId })) })).toThrow(/第2章《大章》正文与图外内文共[\d,]+字，超出单章整理上限[\d,]+字（超出1,234字）/);
+  });
+
+  it("非空白字数：与 replace(/\\s+/g, \"\").length 对全部 BMP 码元逐一等价", () => {
+    for (let c = 0; c < 0x10000; c++) {
+      const v = `a${String.fromCharCode(c)}b`;
+      if (knowledgeNonWhitespaceLength(v) !== v.replace(/\s+/g, "").length) throw new Error(`码元 ${c.toString(16)} 不等价`);
+    }
+    const mixed = "一\u3000二\n\t三\ufeff四\u2028 \ud83d\ude00五";
+    expect(knowledgeNonWhitespaceLength(mixed)).toBe(mixed.replace(/\s+/g, "").length);
+  });
+
+  it("原稿摘要缓存：同内容不同对象结果逐字相同；内容改一字摘要即变", () => {
+    const lib = buildLibrary({ name: "dig", chapters: 3, supplementChars: 20_000 });
+    const source = lib.documents[0]!.publication!.source;
+    const a = knowledgeSourceDigest(source), b = knowledgeSourceDigest(structuredClone(source));
+    const plain = createHash("sha256").update(JSON.stringify({ ...source, pages: source.pages.map(p => p.imageJobId ? { ...p, imageUrl: "" } : p) })).digest("hex");
+    expect(a).toBe(plain); expect(b).toBe(plain);
+    const changed = structuredClone(source); changed.pages[2]!.supplement += "。";
+    expect(knowledgeSourceDigest(changed)).not.toBe(plain);
+    expect(knowledgeSourceDigest(source)).toBe(plain);
+  });
 });
