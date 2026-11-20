@@ -41,6 +41,7 @@ import { nativeLearnLiveProposalState } from "@/lib/manhuaLearnResultUi";
 import { ensureManhuaLearnPageOwnership, readManhuaLearnPageJobId, writeManhuaLearnPageJobId, filterManhuaLearnPageJobs } from "@/lib/manhuaLearnPageScope";
 import { confirmManhuaLearnSource } from "@/lib/manhuaLearnRelearn";
 import { KnowledgeCardRecovery, type RecoveredKnowledgeCard } from "@/components/platform/KnowledgeCardRecovery";
+import { cachedKnowledgeCardPagePlan, isKnowledgeEditionManuscript } from "@/lib/knowledgeCardPreflightCounts";
 import { KnowledgeCardPageTasks } from "@/lib/knowledgeCardPageTask";
 import { gcsTransferUrl } from "@/lib/gcsTransfer";
 import { cachePhotoTemporaryMedia, triggerTemporaryDownload } from "@/lib/photoTemporaryMedia";
@@ -8145,7 +8146,8 @@ export default function PlatformPage() {
   const customOptimizeCopyCost = CREDIT_COSTS.platformOptimizeCustomCopy;
   const customNoteIllustrationMarkdown = knowledgeCardIllustrationMarkdown(customNoteText, customNoteFullMarkdown, customNoteCompactMarkdown, customNoteDetailLevel);
   const customNoteKnowledgePlan = useMemo(
-    () => planKnowledgeCardPages(customNoteIllustrationMarkdown, customNotePreparedModel || customNoteDistillModel),
+    // 1120 L8：按正文缓存，同一份稿（含切回）只规划一次
+    () => cachedKnowledgeCardPagePlan(customNoteIllustrationMarkdown, customNotePreparedModel || customNoteDistillModel),
     [customNoteIllustrationMarkdown, customNotePreparedModel, customNoteDistillModel],
   );
   const customNoteKnowledgeCredits =
@@ -14738,12 +14740,15 @@ export default function PlatformPage() {
                             setCustomNotePendingMeta([]);
                             setCustomNoteDistillPhase("ready");
                             const illustrationText = customNoteDetailLevel === "concise" ? customNoteCompactMarkdownRef.current || "" : shown;
-                            const plan = planKnowledgeCardPages(illustrationText, customNoteDistillModel);
+                            const plan = cachedKnowledgeCardPagePlan(illustrationText, customNoteDistillModel);
                             const pages = Math.max(1, plan.pageCount || 1);
                             const credits =
                               plan.credits || knowledgeCardCreditsForPages(pages, customNoteDistillModel);
                             setCustomNoteProgress({ status: "running", percent: 60, label: "两档配图方案已就绪，请比较张数后选择出图" });
-                            const okMsg = `完整正文已保留。当前档 ${pages} 张图片、${credits} 积分；请比较两档后选择出图。`;
+                            // 两档标记缺失＝两档尚未整理好：旧分页张数不是完整版张数，不显示
+                            const okMsg = isKnowledgeEditionManuscript(illustrationText)
+                              ? `完整正文已保留。当前档 ${pages} 张图片、${credits} 积分；请比较两档后选择出图。`
+                              : "完整正文已保留。两档整理完成后给出张数；请比较两档后选择出图。";
                             setCustomNoteUploadStatus(okMsg);
                             toast.success(okMsg);
                             return true;
