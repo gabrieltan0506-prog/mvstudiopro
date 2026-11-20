@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { knowledgeSkipsPostReviewConsistency, knowledgeSourceFromEditionManuscript } from "./knowledgePublicationAdvisor";
+import { knowledgeSourceSchema } from "../../shared/knowledgePublication";
 
 const root = "r";
 const reader = (existing: string[]) => async (name: string) => (existing.includes(name) ? {} : null);
-const edition = { readingContract: "image-primary-v1", pages: [{ knowledgeRole: "illustration", supplement: "图外内文" }, { knowledgeRole: "illustration" }] };
-const legacy = { readingContract: "image-primary-v1", pages: [{ knowledgeRole: "illustration" }, { knowledgeRole: "illustration" }] };
+const edition = { readingContract: "image-primary-v1" as const, pages: [{ role: "illustration" as const, supplement: "图外内文" }, { role: "illustration" as const }] };
+const legacy = { readingContract: "image-primary-v1" as const, pages: [{ role: "illustration" as const }, { role: "illustration" as const }] };
 
 describe("审校后是否跳过重复的全册核对", () => {
   it("已带核实标记的稿：行为不变（无计划则跳过，已有计划沿用旧流程）", async () => {
@@ -21,8 +22,16 @@ describe("审校后是否跳过重复的全册核对", () => {
   });
   it("按字数分页的旧稿、文字页混排稿、无合同稿：不跳过", async () => {
     expect(await knowledgeSkipsPostReviewConsistency(legacy, root, reader([]))).toBe(false);
-    expect(await knowledgeSkipsPostReviewConsistency({ readingContract: "image-primary-v1", pages: [{ knowledgeRole: "reading", supplement: "x" }, { knowledgeRole: "illustration", supplement: "y" }] }, root, reader([]))).toBe(false);
+    expect(await knowledgeSkipsPostReviewConsistency({ readingContract: "image-primary-v1" as const, pages: [{ role: "reading" as const, supplement: "x" }, { role: "illustration" as const, supplement: "y" }] }, root, reader([]))).toBe(false);
     expect(await knowledgeSkipsPostReviewConsistency({ pages: edition.pages }, root, reader([]))).toBe(false);
     expect(await knowledgeSkipsPostReviewConsistency({}, root, reader([]))).toBe(false);
+  });
+  it("按线上云稿原稿页的真实结构（经原稿合同解析，字段为 role）：回填的两档成稿被识别并跳过", async () => {
+    // 1121 实测线上稿：source 键 = title/detailLevel/reviewBatchMode/readingContract/pages；页键 = id/headline/body/supplement/imageUrl/imageJobId/role。
+    const page = (n: number) => ({ id: `00000000-0000-4000-8000-0000000000${String(n).padStart(2, "0")}`, headline: `第${n}章`, body: "图中要点", supplement: "图外内文", imageUrl: "", imageJobId: `job_${n}`, role: "illustration" as const });
+    const source = knowledgeSourceSchema.parse({ title: "书", detailLevel: "full", reviewBatchMode: "ready-images", readingContract: "image-primary-v1" as const, pages: [page(1), page(2)] });
+    expect(knowledgeSourceFromEditionManuscript(source)).toBe(true);
+    expect(await knowledgeSkipsPostReviewConsistency(source, root, reader(["r/consistency-plan.json"]))).toBe(true);
+    expect(await knowledgeSkipsPostReviewConsistency(source, root, reader(["r/consistency-plan.json", "r/consistency-0/report.json"]))).toBe(false);
   });
 });

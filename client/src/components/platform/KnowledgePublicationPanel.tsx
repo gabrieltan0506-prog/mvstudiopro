@@ -284,7 +284,22 @@ export default function KnowledgePublicationPanel({
       const quote=await quoteFetch!;
       if(quote.maxCredits!==0)throw Error("当前服务尚未应用顾问不另收费规则，请刷新后恢复原任务");
       current();setMessage("正在将全部图片安排到对应正文，统一整册顺序、配色和版式…");
-      const response=await streamKnowledgeAdvisor({question:turn.request.question,rawQuestion:turn.request.question,requestId:intent.requestId,knowledgePublicationContext:{documentId,batchIndex:current().publication!.conversation!.findIndex(t=>t.request.id===intent.requestId),attempt:0,purpose:"conversation"},confirmPaid:quote.maxCredits>0,confirmedCredits:quote.paidUnit},()=>undefined);
+      // 整册排版在服务端分组并行（每组 ≤4 章）；等待期间每 4 秒只读清点已完成组数，进度只增不减，读不到不影响排版本身。
+      let layoutPolling=true;
+      void (async()=>{
+        let best=0;
+        while(layoutPolling&&alive.current){
+          try{
+            const progress=await utils.client.editableLayout.bookLayoutProgress.query({documentId,requestId:intent.requestId});
+            if(layoutPolling&&alive.current&&latest.current.id===documentId&&progress.total>0){best=Math.max(best,progress.done);setStage({step:2,done:best,total:progress.total});}
+          }catch{/* 进度读取失败不打断排版 */}
+          await new Promise(resolve=>window.setTimeout(resolve,4000));
+        }
+      })();
+      let response:Awaited<ReturnType<typeof streamKnowledgeAdvisor>>;
+      try{
+        response=await streamKnowledgeAdvisor({question:turn.request.question,rawQuestion:turn.request.question,requestId:intent.requestId,knowledgePublicationContext:{documentId,batchIndex:current().publication!.conversation!.findIndex(t=>t.request.id===intent.requestId),attempt:0,purpose:"conversation"},confirmPaid:quote.maxCredits>0,confirmedCredits:quote.paidUnit},()=>undefined);
+      }finally{layoutPolling=false;}
       answer=knowledgeConversationAnswerSchema.parse(JSON.parse(response.answer));
     }
     if(answer.requestId!==intent.requestId||!answer.layoutPlan||answer.layoutPlan.sourceDigest!==turn.request.layoutSourceDigest)throw Error("整册排版方案与本次完整稿件不符，未采用");
