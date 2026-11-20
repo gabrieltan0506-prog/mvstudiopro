@@ -28,6 +28,7 @@ import {
 } from "@shared/knowledgePublicationHtml";
 import { trpc } from "@/lib/trpc";
 import { runAfterKnowledgeLayoutDecision } from "@/lib/knowledgeLayoutAskGate";
+import { KnowledgePublicationStageDetail } from "./KnowledgePublicationStageDetail";
 import { KNOWLEDGE_PREVIEW_UNAVAILABLE, KNOWLEDGE_PUBLICATION_STAGES, knowledgeStageLabel, loadKnowledgePreviewWithRetry, type KnowledgePublicationStage } from "@/lib/knowledgePublicationStage";
 import { withKnowledgeAdvisorRecovery } from "@/lib/knowledgeAdvisorRecovery";
 import { streamManhuaAdvisor } from "@/lib/manhuaAdvisorStream";
@@ -50,6 +51,7 @@ export default function KnowledgePublicationPanel({
   preauthorizedPresentationCredits,
   waitForImages,
   waitForLayoutDecision,
+  onStage,
   waitForReading,
   onPagination,
   onSupplement,
@@ -68,6 +70,8 @@ export default function KnowledgePublicationPanel({
   waitForImages?: (ids: string[]) => Promise<void>;
   /** 图片出完后再问（2026-11-21）：有值时自动开始前先等用户选择，只有「排版成册」才启动原流程。 */
   waitForLayoutDecision?: () => Promise<import("@/lib/knowledgeLayoutAskGate").KnowledgeLayoutChoice>;
+  /** 排版四步的当前阶段与失败说明（2026-11-21：排版进度进入手册总体进度条）。 */
+  onStage?: (stage: KnowledgePublicationStage | null, error: string) => void;
   waitForReading?: () => Promise<void>;
   onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>;
   onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void;
@@ -139,6 +143,8 @@ export default function KnowledgePublicationPanel({
   const [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
     [error, setError] = useState("");
+  const reportStage = useRef(onStage); reportStage.current = onStage;
+  useEffect(() => { reportStage.current?.(stage, error); }, [stage, error]);
   // 进度记录（1113 站长令：排版内容框与进度分开，最新在上）：只记录前台已显示过的进度句，纯展示，不影响任务。
   const [progressLog, setProgressLog] = useState<{ at: string; text: string }[]>([]);
   useEffect(() => {
@@ -693,6 +699,7 @@ export default function KnowledgePublicationPanel({
       {(stage || message || error || !review || progressLog.length > 0) && (
         <section aria-label="手册处理进度" className="space-y-2 rounded-xl border border-[#b9c4ad]/40 bg-[#1f3329] p-4">
           <h5 className="text-sm font-semibold text-[#d7e6c4]">处理进度</h5>
+          <KnowledgePublicationStageDetail stage={stage} error={error} />
           {stage && (
             <p aria-label="手册处理阶段" className="text-xs text-[#c0cabb]">
               {knowledgeStageLabel(stage)}

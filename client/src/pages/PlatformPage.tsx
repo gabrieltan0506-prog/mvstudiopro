@@ -351,6 +351,9 @@ import {
   type KnowledgeCardProgressState,
 } from "@/components/platform/KnowledgeCardProgress";
 import { createKnowledgeLayoutGate, knowledgeLayoutAskVisible, readKnowledgeLayoutChoice, writeKnowledgeLayoutChoice, type KnowledgeLayoutChoice, type KnowledgeLayoutGate } from "@/lib/knowledgeLayoutAskGate";
+import { knowledgeHandbookOverallProgress } from "@/lib/knowledgeHandbookOverallProgress";
+import { KnowledgePublicationStageDetail } from "@/components/platform/KnowledgePublicationStageDetail";
+import type { KnowledgePublicationStage } from "@/lib/knowledgePublicationStage";
 import {
   KnowledgeCardPreflight,
   knowledgeCardPublicTierLabel,
@@ -8099,12 +8102,16 @@ export default function PlatformPage() {
   // 图片出完后再问排版（2026-11-21）：按手册稿 sourceId 一份闸；状态机见 lib/knowledgeLayoutAskGate.ts。
   const knowledgeLayoutGatesRef = useRef(new Map<string, KnowledgeLayoutGate>());
   const [knowledgeLayoutPending, setKnowledgeLayoutPending] = useState<{ sourceId: string; documentId: string } | null>(null);
+  // 总体进度的显示推导（2026-11-21）：只要图片 → 100%；要排版 → 同一条进度条接着显示排版四步；未选择 → 停在图片完成处。
+  const [knowledgeLayoutChosen, setKnowledgeLayoutChosen] = useState<{ sourceId: string; choice: KnowledgeLayoutChoice } | null>(null);
+  const [knowledgePublicationStage, setKnowledgePublicationStage] = useState<{ sourceId: string; stage: KnowledgePublicationStage | null; error: string } | null>(null);
   const knowledgeLayoutDecision = (doc: { id: string; sourceId?: string }) => {
     // 只闸当前这本手册；旧稿/其他稿维持原行为（返回 undefined = 不闸）。
     if (!doc.sourceId || doc.sourceId !== knowledgeCardLayoutSourceIdRef.current) return undefined;
     let gate = knowledgeLayoutGatesRef.current.get(doc.sourceId);
     if (!gate) { gate = createKnowledgeLayoutGate(readKnowledgeLayoutChoice(doc.id)); knowledgeLayoutGatesRef.current.set(doc.sourceId, gate); }
     if (!gate.choice) setKnowledgeLayoutPending({ sourceId: doc.sourceId, documentId: doc.id });
+    else { const sourceId = doc.sourceId, choice = gate.choice; setKnowledgeLayoutChosen(prev => prev?.sourceId === sourceId && prev.choice === choice ? prev : { sourceId, choice }); }
     return gate.wait();
   };
   const chooseKnowledgeLayout = (choice: KnowledgeLayoutChoice) => {
@@ -8113,6 +8120,7 @@ export default function PlatformPage() {
     writeKnowledgeLayoutChoice(pending.documentId, choice);
     knowledgeLayoutGatesRef.current.get(pending.sourceId)?.choose(choice);
     setKnowledgeLayoutPending(null);
+    setKnowledgeLayoutChosen({ sourceId: pending.sourceId, choice });
     if (choice === "images_only") toast.message("已保留图片与稿件，之后可在排版面板手动开始排版成册");
   };
   const knowledgeVerifiedEditionRef=useRef<{jobId:string;full:string;concise:string}|null>(null);
@@ -12373,7 +12381,7 @@ export default function PlatformPage() {
           </div>
         ) : null}
 
-        {workbenchUserKey && <StableStudioDock target={knowledgeAdvisorDock} hideWhenUndocked={platformMode !== "create"}><EditableLayoutStudio compact={Boolean(knowledgeAdvisorDock)} ref={layoutStudioRef} key={workbenchUserKey} owner={workbenchUserKey} layoutDecision={knowledgeLayoutDecision} source={layoutSource} readingView={<KnowledgeReadingLive status={readingAdvisorStatus} drafts={readingAdvisorDrafts} />} onSupplement={async(supplementOf,text)=>{await handleGenerateCustomNote({text,kind:"single_page_knowledge_card",supplementOf});}} onPagination={(doc, pagination) => {
+        {workbenchUserKey && <StableStudioDock target={knowledgeAdvisorDock} hideWhenUndocked={platformMode !== "create"}><EditableLayoutStudio compact={Boolean(knowledgeAdvisorDock)} ref={layoutStudioRef} key={workbenchUserKey} owner={workbenchUserKey} layoutDecision={knowledgeLayoutDecision} onPublicationStage={(doc, stage, error) => { const sourceId = doc.sourceId; if (!sourceId || sourceId !== knowledgeCardLayoutSourceIdRef.current) return; setKnowledgePublicationStage(prev => prev?.sourceId === sourceId && prev.stage === stage && prev.error === error ? prev : { sourceId, stage, error }); }} source={layoutSource} readingView={<KnowledgeReadingLive status={readingAdvisorStatus} drafts={readingAdvisorDrafts} />} onSupplement={async(supplementOf,text)=>{await handleGenerateCustomNote({text,kind:"single_page_knowledge_card",supplementOf});}} onPagination={(doc, pagination) => {
           if (doc.sourceId !== knowledgeCardLayoutSourceIdRef.current) return;
           if (!pagination) { setCustomNotePagination(null); return; }
           if (!doc.publication?.inputFingerprint || paginationFingerprint?.key !== customNotePaginationKey || doc.publication.inputFingerprint !== paginationFingerprint.hash) return;
@@ -14946,10 +14954,18 @@ export default function PlatformPage() {
                     onCancel={() => closeKnowledgeCardPreflight(false)}
                   />
                   <KnowledgeCardProgress
-                    state={customNoteProgress}
+                    state={knowledgeHandbookOverallProgress({
+                      base: customNoteProgress,
+                      decision: knowledgeLayoutPending && knowledgeLayoutPending.sourceId === knowledgeCardLayoutSourceIdRef.current ? "pending"
+                        : knowledgeLayoutChosen && knowledgeLayoutChosen.sourceId === knowledgeCardLayoutSourceIdRef.current ? knowledgeLayoutChosen.choice : "not_applicable",
+                      stage: knowledgePublicationStage && knowledgePublicationStage.sourceId === knowledgeCardLayoutSourceIdRef.current ? knowledgePublicationStage.stage : null,
+                      layoutError: knowledgePublicationStage && knowledgePublicationStage.sourceId === knowledgeCardLayoutSourceIdRef.current ? knowledgePublicationStage.error || null : null,
+                    })}
                     onCancel={customNoteDistillJobId || customNoteRendering ? cancelCustomNoteDistill : undefined}
                     cancelBusy={customNoteCancelBusy || customNoteCancelRequested}
                   />
+                  {knowledgeLayoutChosen?.choice === "layout" && knowledgeLayoutChosen.sourceId === knowledgeCardLayoutSourceIdRef.current && knowledgePublicationStage?.sourceId === knowledgeCardLayoutSourceIdRef.current
+                    ? <KnowledgePublicationStageDetail stage={knowledgePublicationStage.stage} error={knowledgePublicationStage.error || null} /> : null}
                   {knowledgeLayoutPending && knowledgeLayoutPending.sourceId === knowledgeCardLayoutSourceIdRef.current && knowledgeLayoutAskVisible({ cardsOnly: false, reviewStarted: false, choice: null, images: customNoteImages, rendering: customNoteRendering, inflight: knowledgeCardInflight.length }) ? (
                     <div role="group" aria-label="是否排版成册" className="flex flex-wrap items-center gap-2 rounded-xl border border-[#b9c4ad]/40 bg-[#1f3329] p-3 text-sm text-[#f5f0e5]">
                       <span>图片已全部完成（{customNoteImages.length} 张）。要继续排版成册吗？</span>
