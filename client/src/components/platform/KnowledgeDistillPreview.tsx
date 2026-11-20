@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 
 export type KnowledgeDistillLive = { jobId: string; readyBatches: number; stageAt?: Record<string, string>; done?: boolean };
@@ -6,38 +6,48 @@ type Segment = { index: number; pages: Array<{ headline: string; body: string }>
 
 /**
  * 提炼进行中的分段预览（1119 F2）：只读、按原顺序、明确标注「非最终稿」。
- * 只在服务端报告的已就绪分组数增长时增量读取（每次最多 8 组），不触发任何模型请求或收费；
+ * 按已就绪分组数增量读取（每次最多 8 组），中断或缺页时从原游标重试；
  * 提炼结束（done）即停止读取并收起，最终稿仍以提炼完成后的正文为准。
  */
 export function KnowledgeDistillPreview({ live }: { live: KnowledgeDistillLive | null }) {
+  if (!live || live.done) return null;
+  return <PreviewPages key={live.jobId} jobId={live.jobId} readyBatches={live.readyBatches} />;
+}
+
+function PreviewPages({ jobId, readyBatches }: { jobId: string; readyBatches: number }) {
   const utils = trpc.useUtils();
   const [segments, setSegments] = useState<Segment[]>([]);
   const [kind, setKind] = useState<"distilled" | "source">("distilled");
   const [error, setError] = useState("");
-  const loading = useRef(false);
-  const jobRef = useRef("");
-  const nextRef = useRef(0);
+  const fromBatch = segments.length;
+  const hasMore = fromBatch < readyBatches;
   useEffect(() => {
-    if (!live || live.jobId !== jobRef.current) { jobRef.current = live?.jobId || ""; nextRef.current = 0; setSegments([]); setError(""); }
-  }, [live?.jobId]);
-  useEffect(() => {
-    if (!live || live.done || loading.current || live.readyBatches <= nextRef.current) return;
-    const jobId = live.jobId;
-    loading.current = true;
-    void utils.editableLayout.distillPreview.fetch({ jobId, fromBatch: nextRef.current })
-      .then(result => {
-        if (jobRef.current !== jobId) return;
+    if (!hasMore) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    let retryDelay = 1500;
+    const load = async () => {
+      try {
+        const result = await utils.editableLayout.distillPreview.fetch({ jobId, fromBatch }, { staleTime: 0, retry: false });
+        if (!active) return;
         setKind(result.kind);
-        if (result.segments.length) {
-          nextRef.current = result.nextBatch;
-          setSegments(prev => [...prev, ...result.segments.filter(s => !prev.some(p => p.index === s.index))].sort((a, b) => a.index - b.index));
-        }
         setError("");
-      })
-      .catch(() => { if (jobRef.current === jobId) setError("预览暂未取回，提炼照常进行"); })
-      .finally(() => { loading.current = false; });
-  }, [live?.jobId, live?.readyBatches, live?.done]);
-  if (!live || live.done || (!segments.length && !error)) return null;
+        if (result.segments.length) {
+          setSegments(previous => [...previous, ...result.segments]);
+          return;
+        }
+      } catch {
+        if (!active) return;
+        setError("预览暂未取回，正在重试。提炼照常进行。");
+      }
+      // 空页可能是乱序完工留下的缺口；稍后从原游标重试。
+      timer = setTimeout(load, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, 15000);
+    };
+    void load();
+    return () => { active = false; clearTimeout(timer); };
+  }, [jobId, fromBatch, hasMore, utils]);
+  if (!segments.length && !error) return null;
   return (
     <details aria-label="提炼进行中预览" className="rounded-xl border border-amber-300/25 bg-amber-300/5 px-3 py-2 text-xs text-[#c9c0e6]/85">
       <summary className="cursor-pointer font-semibold text-amber-100/90">

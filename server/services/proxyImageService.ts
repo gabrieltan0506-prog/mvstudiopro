@@ -1141,7 +1141,7 @@ function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverP
  * 传 `referenceImageUrls` 时走 edit；Canvas `generalImageEdit` 不注入封面换脸指令。
  */
 export async function generateGptImage2FromRawEnglishPrompt(options: {
-  beforeImageSubmit?: () => Promise<void>;
+  beforeImageSubmit?: (submitting?: boolean) => Promise<void>;
   englishPrompt: string;
   aspectRatio: "9:16" | "16:9" | "1:1";
   gcsSubdir: string;
@@ -1331,8 +1331,9 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   const primaryTimeoutMs = getGptImage2PrimaryTimeoutMs();
 
   for (let i = 0; i < providersInOrder.length; i++) {
-    await options.beforeImageSubmit?.();
     const provider = providersInOrder[i]!;
+    // OpenAI 在下载参考图后、实际 POST 前另有提交闸门。
+    await options.beforeImageSubmit?.(provider !== "openai");
     const isPrimary = i === 0;
     const isLast = i === providersInOrder.length - 1 && !tryOpenRouter;
     const tag = provider === "openai" ? "OpenAI" : provider === "wavespeed" ? "WaveSpeed" : "EvoLink";
@@ -1657,9 +1658,19 @@ export async function generatePlatformCompositeSheetImage(options: {
    */
   let imageCallsInFlight = 0;
   let submissionInFlight = false;
-  const markImageSubmit = async () => {
+  let expired = false;
+  const assertWithinDeadline = () => {
+    if (expired) throw Object.assign(new Error("图片任务已超时，停止后续提交"), { kind: "cancelled" });
+  };
+  const checkBeforeSubmit = async () => {
+    assertWithinDeadline();
     await options.beforeImageSubmit?.();
-    if (imageCallsInFlight > 0) submissionInFlight = true;
+    assertWithinDeadline();
+  };
+  const markImageSubmit = async (submitting = true) => {
+    submissionInFlight = false;
+    await checkBeforeSubmit();
+    if (imageCallsInFlight > 0) submissionInFlight = submitting;
   };
   const trackImageCall = async <T>(call: () => Promise<T>): Promise<T> => {
     imageCallsInFlight += 1;
@@ -1672,6 +1683,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   };
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutHandle = setTimeout(() => {
+      expired = true;
       const minutes = Math.round(totalMs / 60000);
       reject(
         submissionInFlight
@@ -1682,7 +1694,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   });
 
   const execute = async (): Promise<string | null> => {
-  await options.beforeImageSubmit?.();
+  await checkBeforeSubmit();
   const L = options.flowLog;
   const k = normalizeCompositeSheetKind(options.kind);
   const isStoryboard = k === "storyboard_sheet_landscape";
@@ -1857,7 +1869,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   let moderationBlocked = false;
 
   for (let attempt = 1; attempt <= compositeMaxAttempts; attempt++) {
-    await options.beforeImageSubmit?.();
+    await checkBeforeSubmit();
     appendImageFlowLog(
       L,
       `[2×4·整链] ═══ 第 ${attempt}/${compositeMaxAttempts} 次尝试开始 ═══`,

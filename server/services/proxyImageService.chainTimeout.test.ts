@@ -17,26 +17,59 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 it("供应商请求已发出、整链超时：抛结果未知（kind=unknown），只发出一次请求", async () => {
-  providers.openai.mockImplementation(async (_p: string, _d: string, o: { beforeImageSubmit?: () => Promise<void> }) => { await o.beforeImageSubmit?.(); return new Promise(() => {}); });
+  let release!: () => void;
+  const pending = new Promise<null>(resolve => { release = () => resolve(null); });
+  let submitted!: () => void;
+  const started = new Promise<void>(resolve => { submitted = resolve; });
+  providers.openai.mockImplementation(async (_p: string, _d: string, o: { beforeImageSubmit?: () => Promise<void> }) => { await o.beforeImageSubmit?.(); submitted(); return pending; });
   const run = generatePlatformCompositeSheetImage({ ...base, beforeImageSubmit: async () => {} });
   const settled = run.then(() => null, (e: unknown) => e);
-  await vi.waitFor(() => expect(providers.openai).toHaveBeenCalledTimes(1));
+  await started;
   await vi.advanceTimersByTimeAsync(60_000);
   const error = await settled as { kind?: string; message?: string };
   expect(error?.kind).toBe("unknown");
   expect(error.message).not.toMatch(/GPT|OpenAI|EvoLink|Sunburst/i);
   // 结果未知的页在路由层记为 pending：不可重买（零第二次出站）
+  release();
+  await vi.advanceTimersByTimeAsync(15_000);
   expect(knowledgeImageMayRetry({ status: "failed", input: { action: "platform_composite_sheet_progress", params: {} }, output: { knowledgeImageRetry: { version: 1, reason: "pending" } } })).toBe(false);
   expect(providers.openai).toHaveBeenCalledTimes(1);
   expect(providers.evo).not.toHaveBeenCalled();
-});
+}, 30_000);
 it("提交闸门之前超时：仍是确定失败（不带 unknown），零出站", async () => {
-  const run = generatePlatformCompositeSheetImage({ ...base, beforeImageSubmit: () => new Promise<void>(() => {}) });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const run = generatePlatformCompositeSheetImage({ ...base, beforeImageSubmit: () => gate });
   const settled = run.then(() => null, (e: unknown) => e);
   await vi.advanceTimersByTimeAsync(60_000);
   const error = await settled as { kind?: string; message?: string };
   expect(error).toBeInstanceOf(Error);
   expect(error.kind).toBeUndefined();
   expect(error.message).toContain("超时");
+  release();
+  await vi.advanceTimersByTimeAsync(15_000);
   for (const p of Object.values(providers)) expect(p).not.toHaveBeenCalled();
 });
+
+it("准备参考图期间超时，迟到的提交闸门拒绝 POST，也不回落", async () => {
+  let release!: () => void;
+  const references = new Promise<void>(resolve => { release = resolve; });
+  const post = vi.fn();
+  let downloading!: () => void;
+  const started = new Promise<void>(resolve => { downloading = resolve; });
+  providers.openai.mockImplementation(async (_p: string, _d: string, options: { beforeImageSubmit: (submitting?: boolean) => Promise<void> }) => {
+    await options.beforeImageSubmit(false);
+    downloading();
+    await references;
+    await options.beforeImageSubmit(true);
+    post();
+  });
+  const result = generatePlatformCompositeSheetImage(base).catch(error => error);
+  await started;
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect((await result).kind).toBeUndefined();
+  release();
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect(post).not.toHaveBeenCalled();
+  expect(providers.evo).not.toHaveBeenCalled();
+}, 30_000);
