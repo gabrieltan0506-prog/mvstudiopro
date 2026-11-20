@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { knowledgeBookLayoutBatches } from "../../shared/knowledgePublication";
 import type { EditableLayout, LayoutLibrary } from "../../shared/editableLayout";
 import type { KnowledgeBookLayoutInput } from "../../shared/knowledgeBookLayout";
 import { applyKnowledgeBookLayout, selectedKnowledgeBookLayout, validateKnowledgeBookLayoutPlan } from "../../shared/knowledgeBookLayout";
@@ -26,6 +27,8 @@ async function cachedBookLayout<T>(enabled: boolean, key: () => string, load: ()
   return structuredClone(await (knowledgeBookLayoutCache.get(key(), load) as Promise<T>));
 }
 
+/** 单次排版请求中本组排版输入（bookLayout）的字节上限；请求整体另有 750000 字节上限（buildKnowledgeConversationRequest）。 */
+export const KNOWLEDGE_BOOK_LAYOUT_REQUEST_MAX_BYTES = 650_000;
 /** 哈希不含签名有效期、聊天记录或采用状态，包含每段正文、原图身份和真实审校。 */
 export function knowledgeBookLayoutInput(source:Source):KnowledgeBookLayoutInput {
   const {doc,review,receipt}=source;
@@ -42,7 +45,13 @@ export function knowledgeBookLayoutInput(source:Source):KnowledgeBookLayoutInput
     previousDesign:review.pages[i].reading?.decoration?.design,
   }));
   const input={sourceDigest,title:doc.title,detailLevel:doc.publication?.source.detailLevel,pages};
-  if(Buffer.byteLength(JSON.stringify(input),"utf8")>650000)throw Error("整册排版超出单次容量，未截断正文或提交请求");
+  // 容量按「单次排版请求」判断：顾问按组（knowledgeBookLayoutBatches，每组 ≤4 章）并行排版，从不把整册一次发出。
+  // 原先按整册判断，200 章的书整册约 1.1MB 即被挡下，而每组只有约 3 万字节（1121 规模演练）。
+  // 摘要（sourceDigest）与各组请求逐字不变：整册不超上限时每组必不超，旧稿行为与请求身份不受影响。
+  for(const group of knowledgeBookLayoutBatches(input)){
+    if(Buffer.byteLength(JSON.stringify({...input,pages:group.map(i=>pages[i])}),"utf8")>KNOWLEDGE_BOOK_LAYOUT_REQUEST_MAX_BYTES)
+      throw Error("整册排版超出单次容量，未截断正文或提交请求");
+  }
   return input;
 }
 export async function loadKnowledgeBookLayoutInput(owner:number,documentId:string,overrides:KnowledgeBookLayoutDeps={},options:CacheOption={}) {

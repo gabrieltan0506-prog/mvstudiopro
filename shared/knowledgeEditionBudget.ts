@@ -79,6 +79,33 @@ export function knowledgeEditionPageBudget(level: KnowledgeEditionLevel, imagePa
   };
 }
 
+/**
+ * 不含空白的字数，与 `value.replace(/\s+/g, "").length` 逐码元等价（JS \s：制表/换行/垂直制表/换页/回车/空格、
+ * U+00A0、U+1680、U+2000–U+200A、U+2028、U+2029、U+202F、U+205F、U+3000、U+FEFF），但不生成新字符串。
+ * 1121 演练：200 章 × 5.5 万字图外内文时，预算函数每次都对全部图外内文跑正则替换，单批整理约 0.18 秒 CPU 花在这里。
+ */
+export function knowledgeNonWhitespaceLength(value: string) {
+  let spaces = 0;
+  for (let i = 0; i < value.length; i++) {
+    const c = value.charCodeAt(i);
+    if (c <= 0x20 ? (c === 0x20 || (c >= 0x09 && c <= 0x0d)) :
+        c >= 0xa0 && (c === 0xa0 || c === 0x1680 || (c >= 0x2000 && c <= 0x200a) || c === 0x2028 || c === 0x2029 || c === 0x202f || c === 0x205f || c === 0x3000 || c === 0xfeff)) spaces++;
+  }
+  return value.length - spaces;
+}
+/**
+ * 图外内文字数的请求内缓存：同一次请求里预算会对同一批原稿页的图外内文算 4–6 次（审校指令、输出合同、篇幅核对前后、建议字数）。
+ * 以页对象为键（WeakMap，页对象随请求释放，不长期占内存），并核对图外内文仍是同一字符串——页被改过就重算，结果逐字等价。
+ */
+const offImageCache = new WeakMap<object, { supplement: string; count: number }>();
+function supplementNonWhitespaceLength(page: { supplement?: string }) {
+  const supplement = page.supplement || "";
+  const hit = offImageCache.get(page);
+  if (hit && hit.supplement === supplement) return hit.count;
+  const count = knowledgeNonWhitespaceLength(supplement);
+  offImageCache.set(page, { supplement, count });
+  return count;
+}
 export type KnowledgeBudgetPage = { id: string; headline: string; body: string; supplement?: string; imageUrl?: string; imageJobId?: string; role?: "reading" | "illustration" };
 
 const hasImage = (p: KnowledgeBudgetPage) => Boolean(p.imageJobId || p.imageUrl || p.role === "illustration");
@@ -103,8 +130,8 @@ export function knowledgeReadingCharBudgets(level: KnowledgeEditionLevel, pages:
   const illustrated = pages.filter(hasImage);
   const budget = knowledgeEditionPageBudget(level, illustrated.length);
   const material = (p: KnowledgeBudgetPage) => {
-    const extra = (p.supplement || "").replace(/\s+/g, "").length;
-    const inImage = p.body.replace(/\s+/g, "").length;
+    const extra = supplementNonWhitespaceLength(p);
+    const inImage = knowledgeNonWhitespaceLength(p.body);
     return extra + 0.5 * inImage;
   };
   const extraPages = new Map<string, number>(illustrated.map(p => [p.id, 0]));
@@ -134,7 +161,7 @@ export function knowledgeReadingCharBudgets(level: KnowledgeEditionLevel, pages:
 
 /** 新预算下一章值得多给一页续页的最少剩余图外资料（半页）；资料很少的章不强行给续页。 */
 const KNOWLEDGE_V2_MIN_REMAINING_FOR_PAGE = Math.round(KNOWLEDGE_READING_PAGE_CHARS / 2);
-const offImageChars = (p: KnowledgeBudgetPage) => (p.supplement || "").replace(/\s+/g, "").length;
+const offImageChars = (p: KnowledgeBudgetPage) => supplementNonWhitespaceLength(p);
 
 /**
  * 新预算（v2）每章正文上限 = 图下一栏 700 字 + 本章续页 × 1300 字。续页总数 = knowledgeTextPageBudgetV2；
@@ -170,7 +197,7 @@ function knowledgeReadingCharBudgetsV2(level: KnowledgeEditionLevel, pages: Know
  * 约为图外资料的九成再加一两句背景（120 字），封顶为上限的九成。
  */
 export function knowledgeImagePrimaryTarget(page: Pick<KnowledgeBudgetPage, "supplement">, maxChars: number) {
-  const offImage = (page.supplement || "").replace(/\s+/g, "").length;
+  const offImage = supplementNonWhitespaceLength(page);
   return Math.max(120, Math.min(Math.floor(maxChars * KNOWLEDGE_BUDGET_PROMPT_MARGIN), Math.round(offImage * 0.9) + 120));
 }
 
